@@ -94,6 +94,7 @@ fun ShapeType.toTypeString(): String = when (this) {
     ShapeType.TRIANGLE -> "TRIANGLE"
     ShapeType.ARROW -> "ARROW"
     ShapeType.LINE -> "LINE"
+    ShapeType.POLYGON -> "POLYGON"
 }
 
 fun String.toShapeType(): ShapeType = when (this) {
@@ -102,6 +103,7 @@ fun String.toShapeType(): ShapeType = when (this) {
     "TRIANGLE" -> ShapeType.TRIANGLE
     "ARROW" -> ShapeType.ARROW
     "LINE" -> ShapeType.LINE
+    "POLYGON" -> ShapeType.POLYGON
     else -> ShapeType.RECTANGLE
 }
 

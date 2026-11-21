@@ -134,6 +134,24 @@ class UseCase {
         )
     }
 
+    @OptIn(ExperimentalTime::class)
+    fun insertNewPolygon(
+        offset: Offset,
+        color: Color,
+        width: Float,
+        strokeStyle: StrokeStyle = StrokeStyle.SOLID,
+        fillColor: Color? = null,
+        strokeEnabled: Boolean = true,
+    ): Element.Shape = insertNewShape(
+        shapeType = ShapeType.POLYGON,
+        offset = offset,
+        color = color,
+        width = width,
+        strokeStyle = strokeStyle,
+        fillColor = fillColor,
+        strokeEnabled = strokeEnabled,
+    )
+
     // Text operations
     @OptIn(ExperimentalTime::class)
     fun insertText(
@@ -261,6 +279,42 @@ class UseCase {
             currentElements.dropLast(1) + lastElement.copy(points = updatedPoints).touched()
         } else {
             currentElements
+        }
+    }
+
+    fun appendPolygonPoint(
+        elements: List<Element>,
+        id: String,
+        point: Offset,
+    ): List<Element> = elements.map { el ->
+        if (el.id == id && el is Element.Shape && el.shapeType == ShapeType.POLYGON) {
+            val last = el.points.lastOrNull()
+            if (last != null && (last - point).getDistance() < POLYGON_POINT_EPSILON) {
+                el
+            } else {
+                el.copy(points = el.points + point).touched()
+            }
+        } else {
+            el
+        }
+    }
+
+    fun updateLatestPolygonPoint(
+        elements: List<Element>,
+        id: String,
+        point: Offset,
+    ): List<Element> = elements.map { el ->
+        if (el.id == id && el is Element.Shape && el.shapeType == ShapeType.POLYGON) {
+            // The first drag starts from a one-vertex polygon. Append the
+            // moving endpoint instead of replacing the start vertex; once a
+            // second vertex exists, subsequent updates move that endpoint.
+            if (el.points.size < 2) {
+                el.copy(points = el.points + point).touched()
+            } else {
+                el.copy(points = el.points.dropLast(1) + point).touched()
+            }
+        } else {
+            el
         }
     }
 
@@ -622,6 +676,9 @@ class UseCase {
  */
 private const val MIN_PEN_POINT_DIST_SQ: Float = 1f
 
+/** Consecutive polygon vertices closer than this are treated as duplicates. */
+private const val POLYGON_POINT_EPSILON: Float = 0.5f
+
 /**
  * World-pixel cap on the longer side of an image placed via [UseCase.insertImage].
  * Large source images (e.g. 4096×3000 screenshots) would otherwise dominate the
@@ -660,7 +717,7 @@ private fun defaultConnectorBend(start: Offset, end: Offset): Offset {
 }
 
 private fun ShapeType.isBindable(): Boolean = when (this) {
-    ShapeType.RECTANGLE, ShapeType.CIRCLE, ShapeType.TRIANGLE -> true
+    ShapeType.RECTANGLE, ShapeType.CIRCLE, ShapeType.TRIANGLE, ShapeType.POLYGON -> true
     ShapeType.LINE, ShapeType.ARROW -> false
 }
 

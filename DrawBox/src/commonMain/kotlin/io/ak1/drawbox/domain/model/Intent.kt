@@ -183,6 +183,29 @@ sealed class Intent {
      */
     data class UpdateLatestShape(val newPoint: Offset) : Intent()
 
+    // ==================== Polygon Operations ====================
+
+    /**
+     * Start a new polygon at [offset]. Creates an [Element.Shape] with
+     * [ShapeType.POLYGON] and a single vertex, and snapshots history once.
+     */
+    data class StartPolygon(val offset: Offset) : Intent()
+
+    /** Append a vertex to the active polygon. Does not snapshot history. */
+    data class AppendPolygonPoint(val point: Offset) : Intent()
+
+    /** Replace the last vertex of the active polygon (drag preview). */
+    data class UpdateLatestPolygonPoint(val point: Offset) : Intent()
+
+    /**
+     * Finish the active polygon and keep it. A polygon with fewer than three
+     * vertices is cancelled instead.
+     */
+    data object FinishPolygon : Intent()
+
+    /** Discard the active polygon and its undo snapshot. */
+    data object CancelPolygon : Intent()
+
     // ==================== Style Operations ====================
 
     /** Change the stroke color for new drawings */

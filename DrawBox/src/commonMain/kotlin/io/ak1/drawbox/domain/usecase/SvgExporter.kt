@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.Color
 import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.ShapeType
 import io.ak1.drawbox.domain.model.StrokeStyle
+import io.ak1.drawbox.domain.model.bounds
 import androidx.compose.ui.geometry.Offset
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -204,6 +205,9 @@ object SvgExporter {
                 start, end, colorToHex(shape.strokeColor), shape.strokeWidth,
                 bend = shape.bend, dashAttr = dashAttr,
             )
+            ShapeType.POLYGON -> polygonToSvg(
+                shape.points, color, strokeWidth, fillAttr, dashAttr,
+            )
         }
 
         return if (shape.rotation != 0f) {
@@ -213,14 +217,13 @@ object SvgExporter {
     }
 
     /**
-     * Center point for SVG rotation. For RECTANGLE / TRIANGLE / ARROW / LINE
-     * the AABB center matches the renderer's `bounds().center`; for CIRCLE
-     * the center is the midpoint of the two diameter endpoints. Both reduce
-     * to `((start + end) / 2)` since the renderer's pivot is the bbox center.
+     * Center point for SVG rotation. The renderer rotates every shape around
+     * its axis-aligned bounds center; use the same pivot here so polygons
+     * (whose `points[0]`/`points[1]` are just two vertices) rotate correctly.
      */
     private fun Element.Shape.unrotatedCenter(): Pair<Float, Float> {
-        val s = points[0]; val e = points[1]
-        return (s.x + e.x) * 0.5f to (s.y + e.y) * 0.5f
+        val center = bounds().center
+        return center.x to center.y
     }
 
     /**
@@ -238,6 +241,22 @@ object SvgExporter {
             StrokeStyle.SOLID -> return ""
         }
         return """ stroke-dasharray="$on,$off""""
+    }
+
+    private fun polygonToSvg(
+        points: List<Offset>,
+        color: String,
+        strokeWidth: Float,
+        fillAttr: String,
+        dashAttr: String,
+    ): String {
+        if (points.size < 2) return ""
+        val pts = points.joinToString(" ") { "${it.x},${it.y}" }
+        return if (points.size >= 3) {
+            """<polygon points="$pts" stroke="$color" stroke-width="$strokeWidth"$dashAttr $fillAttr/>"""
+        } else {
+            """<polyline points="$pts" stroke="$color" stroke-width="$strokeWidth"$dashAttr fill="none"/>"""
+        }
     }
 
     private fun rectangleToSvg(

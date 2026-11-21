@@ -569,6 +569,13 @@ fun DrawBox(
                                     color = s.strokeColor,
                                 ))
                             }
+                            Mode.POLYGON -> {
+                                if (s.activePolygonId == null) {
+                                    latestOnIntent(Intent.StartPolygon(world))
+                                } else {
+                                    latestOnIntent(Intent.AppendPolygonPoint(world))
+                                }
+                            }
                             else -> modeShapeType(s.effectiveMode)?.let { st ->
                                 latestOnIntent(Intent.InsertNewShape(st, world))
                                 latestOnIntent(Intent.UpdateLatestShape(world))
@@ -639,6 +646,14 @@ fun DrawBox(
                             // intersects an element pushes nothing to undo.
                             latestOnIntent(Intent.BeginErase)
                             latestOnIntent(Intent.EraseAt(world, s.eraserSize / s.viewport.scale))
+                            dragInProgress = true
+                        }
+                        Mode.POLYGON -> {
+                            if (s.activePolygonId == null) {
+                                latestOnIntent(Intent.StartPolygon(world))
+                            } else {
+                                latestOnIntent(Intent.AppendPolygonPoint(world))
+                            }
                             dragInProgress = true
                         }
                         else -> modeShapeType(s.effectiveMode)?.let { st ->
@@ -768,6 +783,9 @@ fun DrawBox(
                             val r = s.eraserSize * change.pressureMultiplier() / s.viewport.scale
                             latestOnIntent(Intent.EraseAt(world, r))
                         }
+                        Mode.POLYGON -> latestOnIntent(
+                            Intent.UpdateLatestPolygonPoint(world),
+                        )
                         else -> if (modeShapeType(s.effectiveMode) != null) {
                             latestOnIntent(Intent.UpdateLatestShape(world))
                         }
@@ -839,6 +857,9 @@ fun DrawBox(
                     // element to mark active. The sample app's modal editor
                     // dispatches the eventual UpdateText separately.
                     Mode.TEXT -> emptySet()
+                    // The polygon is appended to as the gesture advances; mark
+                    // only the in-progress element active.
+                    Mode.POLYGON -> state.activePolygonId?.let { setOf(it) } ?: emptySet()
                     Mode.PEN, Mode.RECTANGLE, Mode.CIRCLE, Mode.TRIANGLE, Mode.ARROW, Mode.LINE -> {
                         val lastId = orderedElements.lastOrNull()?.id
                         if (lastId == null) emptySet() else setOf(lastId)
@@ -1041,7 +1062,7 @@ private fun modeShapeType(mode: Mode): ShapeType? = when (mode) {
     Mode.TRIANGLE -> ShapeType.TRIANGLE
     Mode.ARROW -> ShapeType.ARROW
     Mode.LINE -> ShapeType.LINE
-    Mode.PEN, Mode.SELECT, Mode.PAN, Mode.ERASER, Mode.TEXT -> null
+    Mode.PEN, Mode.SELECT, Mode.PAN, Mode.ERASER, Mode.TEXT, Mode.POLYGON -> null
 }
 
 /**
@@ -1050,7 +1071,8 @@ private fun modeShapeType(mode: Mode): ShapeType? = when (mode) {
  * at the exact finger-down point rather than after the ~8dp system slop.
  */
 private fun Mode.isDrawingMode(): Boolean =
-    this == Mode.PEN || this == Mode.ERASER || modeShapeType(this) != null
+    this == Mode.PEN || this == Mode.POLYGON || this == Mode.ERASER ||
+        modeShapeType(this) != null
 
 // ==================== Selection gesture support ====================
 
@@ -1703,6 +1725,19 @@ private fun DrawScope.drawImageElement(
  * @see drawArrowShape for arrow rendering
  */
 private fun DrawScope.drawShape(shape: Element.Shape) {
+    if (shape.points.isEmpty()) return
+    // A polygon starts with a single vertex; show it while the user places
+    // the next points instead of rendering an invisible element.
+    if (shape.shapeType == ShapeType.POLYGON && shape.points.size == 1) {
+        if (shape.strokeEnabled && shape.strokeWidth > 0f) {
+            drawCircle(
+                color = shape.strokeColor,
+                radius = maxOf(shape.strokeWidth * 0.5f, 2f),
+                center = shape.points.first(),
+            )
+        }
+        return
+    }
     if (shape.points.size < 2) return
 
     val start = shape.points[0]
@@ -1786,6 +1821,21 @@ private fun DrawScope.drawShape(shape: Element.Shape) {
         }
         ShapeType.ARROW -> {
             drawArrowShape(shape)
+        }
+        ShapeType.POLYGON -> {
+            val path = Path().apply {
+                moveTo(shape.points.first().x, shape.points.first().y)
+                for (i in 1 until shape.points.size) {
+                    lineTo(shape.points[i].x, shape.points[i].y)
+                }
+                if (shape.points.size >= 3) close()
+            }
+            if (hasFill && shape.points.size >= 3) {
+                drawPath(path, color = shape.fillColor, style = Fill)
+            }
+            if (hasStroke) {
+                drawPath(path, color = shape.strokeColor, style = shape.strokeDrawStyle())
+            }
         }
         ShapeType.LINE -> {
             if (shape.bend == Offset.Zero) {

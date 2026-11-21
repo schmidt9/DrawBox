@@ -36,6 +36,8 @@ fun Element.bounds(): Rect = when (this) {
         // The bbox is the square inscribing the circle.
         ShapeType.CIRCLE -> circleBounds(points)
         ShapeType.LINE, ShapeType.ARROW -> lineArrowBounds(this)
+        // Every polygon vertex is part of the rendered shape.
+        ShapeType.POLYGON -> pointsBounds(points)
         // Rectangles + triangles render from points[0] to points.last(); the
         // intermediate points (if any) are dead weight from older code that
         // appended on every drag tick. Match what the renderer actually draws.
@@ -375,7 +377,45 @@ private fun hitTestShape(
                 distanceToQuadraticBezier(p, start, control, end) <= hitRadius
             }
         }
+        ShapeType.POLYGON -> {
+            val vertices = shape.points
+            when {
+                vertices.isEmpty() -> false
+                vertices.size == 1 -> distance(vertices[0], p) <= hitRadius
+                vertices.size == 2 -> distanceToSegment(p, vertices[0], vertices[1]) <= hitRadius
+                shape.fillColor != null -> {
+                    pointInPolygon(p, vertices) ||
+                        polygonEdges(vertices).any { (a, b) ->
+                            distanceToSegment(p, a, b) <= hitRadius
+                        }
+                }
+                else -> polygonEdges(vertices).any { (a, b) ->
+                    distanceToSegment(p, a, b) <= hitRadius
+                }
+            }
+        }
     }
+}
+
+private fun polygonEdges(vertices: List<Offset>): List<Pair<Offset, Offset>> =
+    vertices.indices.map { i -> vertices[i] to vertices[(i + 1) % vertices.size] }
+
+/**
+ * Ray-casting point-in-polygon test. Vertices are treated as a closed loop.
+ */
+private fun pointInPolygon(p: Offset, vertices: List<Offset>): Boolean {
+    if (vertices.size < 3) return false
+    var inside = false
+    var j = vertices.lastIndex
+    for (i in vertices.indices) {
+        val vi = vertices[i]
+        val vj = vertices[j]
+        val crosses = (vi.y > p.y) != (vj.y > p.y) &&
+            p.x < (vj.x - vi.x) * (p.y - vi.y) / (vj.y - vi.y) + vi.x
+        if (crosses) inside = !inside
+        j = i
+    }
+    return inside
 }
 
 private fun distanceToQuadraticBezier(p: Offset, p0: Offset, p1: Offset, p2: Offset): Float {
@@ -446,6 +486,10 @@ fun Element.withBounds(newBounds: Rect): Element {
         ).touched()
         is Element.Shape -> when (shapeType) {
             ShapeType.CIRCLE -> resizeCircle(this, safeBounds).touched()
+            ShapeType.POLYGON -> {
+                val mapped = scalePoints(points, bounds(), safeBounds)
+                copy(points = mapped).touched()
+            }
             else -> {
                 if (points.size < 2) {
                     copy(points = listOf(safeBounds.topLeft, safeBounds.bottomRight)).touched()

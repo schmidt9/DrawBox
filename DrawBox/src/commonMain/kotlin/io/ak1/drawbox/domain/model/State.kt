@@ -35,6 +35,13 @@ sealed class Mode {
     data object ARROW : Mode()
     /** Line shape mode */
     data object LINE : Mode()
+    /**
+     * Polygon mode — tap or drag adds a vertex to the active polygon.
+     * The host finishes or cancels it with [Intent.FinishPolygon] /
+     * [Intent.CancelPolygon]; [State.activePolygonId] tracks the in-progress
+     * element.
+     */
+    data object POLYGON : Mode()
     /** Selection mode - tap / drag to select, move, resize, rotate existing elements */
     data object SELECT : Mode()
     /** Pan mode - drag pans the camera; useful for navigating the infinite canvas */
@@ -73,7 +80,7 @@ data class ToolSettings(
 /** Modes that carry meaningful per-tool style. Utility modes are excluded. */
 private val PersistedModes: Set<Mode> = setOf(
     Mode.PEN, Mode.RECTANGLE, Mode.CIRCLE, Mode.TRIANGLE,
-    Mode.ARROW, Mode.LINE, Mode.TEXT,
+    Mode.ARROW, Mode.LINE, Mode.POLYGON, Mode.TEXT,
 )
 
 /**
@@ -125,6 +132,12 @@ data class State(
     val future: List<List<Element>> = emptyList(),
     val selectedIds: Set<String> = emptySet(),
     val marqueeRect: Rect? = null,
+    /**
+     * ID of the polygon currently being built in [Mode.POLYGON], if any.
+     * Transient: not serialized; cleared by finish, cancel, delete, undo/redo,
+     * or switching away from [Mode.POLYGON].
+     */
+    val activePolygonId: String? = null,
     val viewport: Viewport = Viewport(),
     val tempPanActive: Boolean = false,
     val strokeColor: Color = Color.Red,

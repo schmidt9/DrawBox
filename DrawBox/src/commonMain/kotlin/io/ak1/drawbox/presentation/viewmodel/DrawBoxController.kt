@@ -399,6 +399,15 @@ class DrawBoxController(
     /** Change the world-space radius used by [Mode.ERASER]. */
     fun setEraserSize(size: Float) = onIntent(Intent.SetEraserSize(size))
 
+    /**
+     * Finish the polygon currently being built in [Mode.POLYGON]. A polygon
+     * with fewer than three vertices is discarded.
+     */
+    fun finishPolygon() = onIntent(Intent.FinishPolygon)
+
+    /** Discard the polygon currently being built in [Mode.POLYGON]. */
+    fun cancelPolygon() = onIntent(Intent.CancelPolygon)
+
     /** Bring selected elements to the top of the z-order. */
     fun bringSelectionToFront() = onIntent(Intent.BringSelectionToFront)
 

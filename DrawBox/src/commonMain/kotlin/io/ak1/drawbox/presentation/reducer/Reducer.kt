@@ -37,6 +37,11 @@ class Reducer(
         is Intent.DeleteElement -> state.snapshot().copy(
             elements = useCase.deleteElement(intent.elementId, state.elements),
             selectedIds = state.selectedIds - intent.elementId,
+            activePolygonId = if (state.activePolygonId == intent.elementId) {
+                null
+            } else {
+                state.activePolygonId
+            },
         )
         is Intent.InsertNewPath -> {
             val newPath = useCase.insertNewPath(
@@ -138,6 +143,55 @@ class Reducer(
         is Intent.UpdateLatestShape -> state.copy(
             elements = useCase.updateLatestShape(intent.newPoint, state.elements),
         )
+        is Intent.StartPolygon -> {
+            val polygon = useCase.insertNewPolygon(
+                intent.offset,
+                state.strokeColor,
+                state.strokeWidth,
+                state.currentItemStrokeStyle,
+                state.currentItemFillColor,
+                state.currentItemStrokeEnabled,
+            )
+            state.snapshot().copy(
+                elements = useCase.addElement(polygon, state.elements),
+                activePolygonId = polygon.id,
+            )
+        }
+        is Intent.AppendPolygonPoint -> {
+            val id = state.activePolygonId ?: return@reduce state
+            state.copy(
+                elements = useCase.appendPolygonPoint(state.elements, id, intent.point),
+            )
+        }
+        is Intent.UpdateLatestPolygonPoint -> {
+            val id = state.activePolygonId ?: return@reduce state
+            state.copy(
+                elements = useCase.updateLatestPolygonPoint(state.elements, id, intent.point),
+            )
+        }
+        is Intent.FinishPolygon -> {
+            val id = state.activePolygonId ?: return@reduce state
+            val polygon = state.elements.firstOrNull { it.id == id } as? Element.Shape
+            if (polygon == null || polygon.points.size < 3) {
+                state.copy(
+                    elements = useCase.deleteElement(id, state.elements),
+                    selectedIds = state.selectedIds - id,
+                    history = state.history.dropLast(1),
+                    activePolygonId = null,
+                )
+            } else {
+                state.copy(activePolygonId = null)
+            }
+        }
+        is Intent.CancelPolygon -> {
+            val id = state.activePolygonId ?: return@reduce state
+            state.copy(
+                elements = useCase.deleteElement(id, state.elements),
+                selectedIds = state.selectedIds - id,
+                history = state.history.dropLast(1),
+                activePolygonId = null,
+            )
+        }
         is Intent.SetStrokeColor -> state.copy(strokeColor = intent.color)
         is Intent.SetStrokeWidth -> state.copy(strokeWidth = intent.width)
         is Intent.SetCornerRadius -> state.copy(currentItemCornerRadius = intent.radius)
@@ -173,10 +227,21 @@ class Reducer(
             val restored = if (intent.mode.persistsSettings())
                 nextMemory[intent.mode] else null
             val nextSelected = if (intent.mode == Mode.SELECT) state.selectedIds else emptySet()
+            val activeId = state.activePolygonId
+            val cancelActive = activeId != null && intent.mode != Mode.POLYGON
+            val nextElements = if (cancelActive) {
+                useCase.deleteElement(activeId, state.elements)
+            } else {
+                state.elements
+            }
+            val nextHistory = if (cancelActive) state.history.dropLast(1) else state.history
             state.copy(
+                elements = nextElements,
+                history = nextHistory,
                 mode = intent.mode,
                 selectedIds = nextSelected,
                 marqueeRect = null,
+                activePolygonId = if (intent.mode == Mode.POLYGON) activeId else null,
                 toolMemory = nextMemory,
                 strokeColor = restored?.strokeColor ?: state.strokeColor,
                 strokeWidth = restored?.strokeWidth ?: state.strokeWidth,
@@ -213,6 +278,7 @@ class Reducer(
             else state.snapshot().copy(
                 elements = useCase.deleteSelected(state.elements, state.selectedIds),
                 selectedIds = emptySet(),
+                activePolygonId = state.activePolygonId?.takeIf { it !in state.selectedIds },
             )
         }
         is Intent.BeginTransform -> state.snapshot()
@@ -316,6 +382,9 @@ class Reducer(
                     elements = next,
                     erasingSessionDirty = true,
                     selectedIds = state.selectedIds.intersect(next.map { it.id }.toSet()),
+                    activePolygonId = state.activePolygonId?.takeIf { id ->
+                        next.any { it.id == id }
+                    },
                 )
             }
         }
@@ -357,6 +426,7 @@ class Reducer(
                 history = state.history.dropLast(1),
                 future = (state.future + listOf(state.elements)).takeLast(HISTORY_CAP),
                 selectedIds = state.selectedIds.intersect(prev.map { it.id }.toSet()),
+                activePolygonId = null,
             )
         }
         is Intent.Redo -> {
@@ -366,6 +436,7 @@ class Reducer(
                 future = state.future.dropLast(1),
                 history = (state.history + listOf(state.elements)).takeLast(HISTORY_CAP),
                 selectedIds = state.selectedIds.intersect(next.map { it.id }.toSet()),
+                activePolygonId = null,
             )
         }
         is Intent.Reset -> State()

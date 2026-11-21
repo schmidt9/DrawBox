@@ -361,6 +361,8 @@ sealed class ShapeType {
     data object ARROW : ShapeType()
     /** Straight line shape */
     data object LINE : ShapeType()
+    /** Closed polygon defined by an arbitrary ordered list of vertices */
+    data object POLYGON : ShapeType()
 }
 
 /**
