@@ -717,7 +717,7 @@ class UseCase {
         val freshFullyConnected = startId != null && endId != null &&
             (target.startBinding != startId || target.endBinding != endId) &&
             target.bend == Offset.Zero
-        val seededBend = if (freshFullyConnected && startId != null && endId != null) {
+        val seededBend = if (freshFullyConnected) {
             // Predict where propagateBindings will snap the endpoints to and size
             // the bend relative to THAT segment. Using the raw drag points (often
             // near shape centers) overshoots once snapping moves the endpoints to

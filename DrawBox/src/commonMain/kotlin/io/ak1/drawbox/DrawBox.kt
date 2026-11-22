@@ -101,6 +101,7 @@ import io.ak1.drawbox.domain.model.distance
 import io.ak1.drawbox.domain.model.effectiveMode
 import io.ak1.drawbox.domain.model.findElementById
 import io.ak1.drawbox.domain.model.flattenElements
+import io.ak1.drawbox.domain.model.pathToElement
 import io.ak1.drawbox.domain.model.pointerInElementParentFrame
 import io.ak1.drawbox.domain.model.resolveHitPath
 import io.ak1.drawbox.domain.model.resolveTap
@@ -1355,6 +1356,56 @@ private fun DrawScope.drawSelectionChrome(
         }
     }
 
+    // Ancestor groups of the current selection: drawn as thin dotted scope
+    // outlines so a child selected inside a group still shows its containing
+    // group (including nested groups).
+    val scopeGroupIds = buildSet {
+        state.selectedIds.forEach { id ->
+            state.elements.pathToElement(id)
+                ?.dropLast(1)
+                ?.forEach { ancestor ->
+                    if (ancestor is Element.Group) add(ancestor.id)
+                }
+        }
+    }
+
+    fun drawScopeOutline(group: Element.Group) {
+        val b = group.bounds()
+        val pad = metrics.paddingPx * inverseScale
+        val box = Rect(
+            left = b.left - pad,
+            top = b.top - pad,
+            right = b.right + pad,
+            bottom = b.bottom + pad,
+        )
+        val strokeWidth = metrics.strokeWidthPx * 0.65f * inverseScale
+        val dash = floatArrayOf(2f * inverseScale, 3f * inverseScale)
+        val corner = CornerRadius(
+            metrics.cornerRadiusPx * inverseScale,
+            metrics.cornerRadiusPx * inverseScale,
+        )
+        fun drawOutline() {
+            drawRoundRect(
+                color = metrics.accent.copy(alpha = 0.55f),
+                topLeft = box.topLeft,
+                size = Size(box.width, box.height),
+                cornerRadius = corner,
+                style = Stroke(
+                    width = strokeWidth,
+                    cap = StrokeCap.Round,
+                    pathEffect = PathEffect.dashPathEffect(dash),
+                ),
+            )
+        }
+        if (group.rotation == 0f) {
+            drawOutline()
+        } else {
+            withTransform({ rotate(group.rotation, pivot = b.center) }) {
+                drawOutline()
+            }
+        }
+    }
+
     fun visit(element: Element) {
         if (element is Element.Group) {
             if (element.id in state.selectedIds && element.id !in hiddenElementIds) {
@@ -1363,12 +1414,14 @@ private fun DrawScope.drawSelectionChrome(
                 drawElementChrome(element)
                 return
             }
-            if (!element.containsAnyId(state.selectedIds)) return
-            if (element.rotation == 0f) {
-                element.children.forEach(::visit)
-            } else {
-                withTransform({ rotate(element.rotation, pivot = element.bounds().center) }) {
+            if (element.containsAnyId(state.selectedIds)) {
+                if (element.id in scopeGroupIds) drawScopeOutline(element)
+                if (element.rotation == 0f) {
                     element.children.forEach(::visit)
+                } else {
+                    withTransform({ rotate(element.rotation, pivot = element.bounds().center) }) {
+                        element.children.forEach(::visit)
+                    }
                 }
             }
         } else if (element.id in state.selectedIds && element.id !in hiddenElementIds) {
