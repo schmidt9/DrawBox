@@ -29,6 +29,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.isCtrlPressed as isKeyCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed as isKeyMetaPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -350,6 +352,16 @@ fun DrawBox(
                     } else {
                         false
                     }
+                } else if (event.key == Key.D &&
+                    event.type == KeyEventType.KeyDown &&
+                    (event.isKeyCtrlPressed || event.isKeyMetaPressed)
+                ) {
+                    if (latestState.mode == Mode.SELECT &&
+                        latestState.selectedIds.isNotEmpty()
+                    ) {
+                        latestOnIntent(Intent.DuplicateSelected)
+                    }
+                    true
                 } else if (event.key == Key.Spacebar) {
                     when (event.type) {
                         KeyEventType.KeyDown -> {

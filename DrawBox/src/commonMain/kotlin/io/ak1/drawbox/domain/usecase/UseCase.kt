@@ -31,6 +31,13 @@ import io.ak1.drawbox.domain.model.withZIndex
 import kotlin.math.sqrt
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
+import kotlin.uuid.Uuid
+
+/** Result of [UseCase.duplicateSelected]. */
+data class DuplicateResult(
+    val elements: List<Element>,
+    val selectedIds: Set<String>,
+)
 
 class UseCase {
     // Element operations
@@ -473,6 +480,77 @@ class UseCase {
     }
 
     /**
+     * Deep-copy selected direct children of [groupPath], assign fresh IDs to
+     * every copied node, offset the copies, and return them selected. Bindings
+     * pointing inside the duplicated set are remapped; external bindings stay
+     * attached to their originals.
+     */
+    @OptIn(ExperimentalTime::class)
+    fun duplicateSelected(
+        elements: List<Element>,
+        groupPath: List<String>,
+        ids: Set<String>,
+    ): DuplicateResult? {
+        val scope = elements.childrenAt(groupPath)
+        val selected = scope.filter { it.id in ids }.sortedBy { it.zIndex }
+        if (selected.isEmpty()) return null
+
+        val now = Clock.System.now().toEpochMilliseconds()
+        val idMap = HashMap<String, String>()
+        fun assignNewIds(element: Element) {
+            idMap[element.id] = Uuid.random().toString()
+            if (element is Element.Group) element.children.forEach(::assignNewIds)
+        }
+        selected.forEach(::assignNewIds)
+
+        fun clone(element: Element): Element = when (element) {
+            is Element.Path -> element.copy(
+                id = idMap.getValue(element.id),
+                createdAt = now,
+                modifiedAt = now,
+            )
+            is Element.Image -> element.copy(
+                id = idMap.getValue(element.id),
+                createdAt = now,
+                modifiedAt = now,
+            )
+            is Element.Text -> element.copy(
+                id = idMap.getValue(element.id),
+                createdAt = now,
+                modifiedAt = now,
+            )
+            is Element.Shape -> element.copy(
+                id = idMap.getValue(element.id),
+                startBinding = element.startBinding?.let { idMap[it] ?: it },
+                endBinding = element.endBinding?.let { idMap[it] ?: it },
+                createdAt = now,
+                modifiedAt = now,
+            )
+            is Element.Group -> element.copy(
+                id = idMap.getValue(element.id),
+                children = element.children.map(::clone),
+                createdAt = now,
+                modifiedAt = now,
+            )
+        }
+
+        val offset = elements.elementParentFrameVector(
+            selected.first().id,
+            DUPLICATE_OFFSET_WORLD,
+        )
+        val maxZ = scope.maxOfOrNull { it.zIndex } ?: -1
+        val clones = selected
+            .map { clone(it).translate(offset) }
+            .mapIndexed { index, element -> element.withZIndex(maxZ + 1 + index) }
+        val rebuiltScope = propagateBindings(scope + clones)
+
+        return DuplicateResult(
+            elements = elements.replaceScopeChildren(groupPath, rebuiltScope),
+            selectedIds = clones.mapTo(hashSetOf()) { it.id },
+        )
+    }
+
+    /**
      * Remove every element whose body is within `radius` of `point`. Reuses the
      * same [hitTest] used by selection, with the eraser disk radius substituted
      * for the pick tolerance — which means stroke width is already accounted
@@ -813,6 +891,9 @@ class UseCase {
             transform(element)
         }
 }
+
+/** Diagonal offset applied to duplicated roots, in the current scope frame. */
+private val DUPLICATE_OFFSET_WORLD = Offset(16f, 16f)
 
 /**
  * Minimum world-space distance² between consecutive freehand pen samples.

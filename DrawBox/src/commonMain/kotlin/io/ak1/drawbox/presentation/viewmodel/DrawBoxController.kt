@@ -377,6 +377,9 @@ class DrawBoxController(
     /** Ungroup the single selected group at the current scope. */
     fun ungroupSelection() = onIntent(Intent.UngroupSelected)
 
+    /** Deep-copy the selection with an offset and select the copy. */
+    fun duplicateSelection() = onIntent(Intent.DuplicateSelected)
+
     /** Leave the innermost entered group one level. */
     fun exitGroup() = onIntent(Intent.ExitGroup)
 

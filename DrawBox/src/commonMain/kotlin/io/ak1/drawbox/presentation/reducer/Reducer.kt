@@ -354,6 +354,21 @@ class Reducer(
                 )
             }
         }
+        is Intent.DuplicateSelected -> {
+            val result = useCase.duplicateSelected(
+                state.elements,
+                state.groupPath,
+                state.selectedIds,
+            )
+            if (result == null) {
+                state
+            } else {
+                state.snapshot().copy(
+                    elements = result.elements,
+                    selectedIds = result.selectedIds,
+                )
+            }
+        }
         is Intent.ExitGroup -> {
             if (state.groupPath.isEmpty()) {
                 state.copy(selectedIds = emptySet())

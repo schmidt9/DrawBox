@@ -300,6 +300,12 @@ sealed class Intent {
     data object UngroupSelected : Intent()
 
     /**
+     * Deep-copy the selected direct children of the current scope, offset the
+     * copies, and select them. Snapshots history once.
+     */
+    data object DuplicateSelected : Intent()
+
+    /**
      * Leave the innermost entered group one level. Selects the group being
      * exited; with no entered group, clears the selection. Not undoable.
      */
