@@ -9,15 +9,25 @@ import io.ak1.drawbox.domain.model.ResizeHandle
 import io.ak1.drawbox.domain.model.ShapeType
 import io.ak1.drawbox.domain.model.StrokeStyle
 import io.ak1.drawbox.domain.model.TextAlignment
+import io.ak1.drawbox.domain.model.bakedIntoParent
 import io.ak1.drawbox.domain.model.bounds
+import io.ak1.drawbox.domain.model.childrenAt
 import io.ak1.drawbox.domain.model.connectorAnchor
+import io.ak1.drawbox.domain.model.elementParentFrameVector
+import io.ak1.drawbox.domain.model.elementWorldAabb
+import io.ak1.drawbox.domain.model.findElementById
 import io.ak1.drawbox.domain.model.hitTest
+import io.ak1.drawbox.domain.model.mapElementById
+import io.ak1.drawbox.domain.model.removeElementsByIds
+import io.ak1.drawbox.domain.model.replaceScopeChildren
 import io.ak1.drawbox.domain.model.resizeBounds
 import io.ak1.drawbox.domain.model.topmostHit
 import io.ak1.drawbox.domain.model.touched
 import io.ak1.drawbox.domain.model.translate
+import io.ak1.drawbox.domain.model.visualAabb
 import io.ak1.drawbox.domain.model.withBounds
 import io.ak1.drawbox.domain.model.withRotation
+import io.ak1.drawbox.domain.model.withZIndex
 import kotlin.math.sqrt
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -30,16 +40,17 @@ class UseCase {
             is Element.Shape -> element.copy(zIndex = currentElements.size)
             is Element.Image -> element.copy(zIndex = currentElements.size)
             is Element.Text -> element.copy(zIndex = currentElements.size)
+            is Element.Group -> element.copy(zIndex = currentElements.size)
         }
         return currentElements + newElement
     }
 
     fun updateElement(element: Element, currentElements: List<Element>): List<Element> {
-        return currentElements.map { if (it.id == element.id) element else it }
+        return currentElements.mapElementById(element.id) { element }
     }
 
     fun deleteElement(elementId: String, currentElements: List<Element>): List<Element> {
-        return currentElements.filter { it.id != elementId }
+        return currentElements.removeElementsByIds(setOf(elementId))
     }
 
     // Path operations
@@ -191,9 +202,8 @@ class UseCase {
         elements: List<Element>,
         id: String,
         height: Float,
-    ): List<Element> = elements.map { el ->
-        if (el is Element.Text && el.id == id) el.copy(measuredHeight = height)
-        else el
+    ): List<Element> = elements.mapElementById(id) { el ->
+        if (el is Element.Text) el.copy(measuredHeight = height) else el
     }
 
     /** Replace the [text] field of a single [Element.Text]. Snapshots history. */
@@ -201,9 +211,8 @@ class UseCase {
         elements: List<Element>,
         id: String,
         text: String,
-    ): List<Element> = elements.map { el ->
-        if (el.id == id && el is Element.Text) el.copy(text = text).touched()
-        else el
+    ): List<Element> = elements.mapElementById(id) { el ->
+        if (el is Element.Text) el.copy(text = text).touched() else el
     }
 
     /** Set font size on every selected [Element.Text]. */
@@ -211,8 +220,8 @@ class UseCase {
         elements: List<Element>,
         ids: Set<String>,
         size: Float,
-    ): List<Element> = elements.map { el ->
-        if (el.id in ids && el is Element.Text) el.copy(fontSize = size).touched() else el
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
+        if (el is Element.Text) el.copy(fontSize = size).touched() else el
     }
 
     /** Set text alignment on every selected [Element.Text]. */
@@ -220,8 +229,8 @@ class UseCase {
         elements: List<Element>,
         ids: Set<String>,
         alignment: TextAlignment,
-    ): List<Element> = elements.map { el ->
-        if (el.id in ids && el is Element.Text) el.copy(alignment = alignment).touched() else el
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
+        if (el is Element.Text) el.copy(alignment = alignment).touched() else el
     }
 
     /** Set font family key on every selected [Element.Text]. */
@@ -229,8 +238,8 @@ class UseCase {
         elements: List<Element>,
         ids: Set<String>,
         fontFamilyKey: String,
-    ): List<Element> = elements.map { el ->
-        if (el.id in ids && el is Element.Text) el.copy(fontFamilyKey = fontFamilyKey).touched() else el
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
+        if (el is Element.Text) el.copy(fontFamilyKey = fontFamilyKey).touched() else el
     }
 
     // Image operations
@@ -324,43 +333,62 @@ class UseCase {
     fun hitTopmost(elements: List<Element>, point: Offset, tolerance: Float): Element? =
         topmostHit(elements, point, tolerance)
 
-    /** Set of element IDs whose bounding box intersects `rect`. */
-    fun selectInRect(elements: List<Element>, rect: Rect): Set<String> {
+    /**
+     * Set of direct-scope element IDs whose rendered bounds intersect `rect`.
+     * [groupPath] scopes the selection to the entered group's children; their
+     * world AABBs account for ancestor rotations.
+     */
+    fun selectInRect(
+        elements: List<Element>,
+        rect: Rect,
+        groupPath: List<String> = emptyList(),
+    ): Set<String> {
         val norm = Rect(
             left = minOf(rect.left, rect.right),
             top = minOf(rect.top, rect.bottom),
             right = maxOf(rect.left, rect.right),
             bottom = maxOf(rect.top, rect.bottom),
         )
-        return elements
-            .filter { it.bounds().overlaps(norm) }
+        return elements.childrenAt(groupPath)
+            .filter { child ->
+                (elements.elementWorldAabb(child.id) ?: child.visualAabb()).overlaps(norm)
+            }
             .map { it.id }
             .toSet()
     }
 
-    /** Translate every element whose id is in `ids` by `delta`. */
+    /** Translate every element whose id is in `ids` by `delta` (world space). */
     fun translateSelected(
         elements: List<Element>,
         ids: Set<String>,
         delta: Offset,
     ): List<Element> {
         if (ids.isEmpty()) return elements
-        return elements.map { if (it.id in ids) it.translate(delta) else it }
+        fun visit(scope: List<Element>): List<Element> = scope.map { el ->
+            when {
+                el.id in ids -> el.translate(
+                    elements.elementParentFrameVector(el.id, delta),
+                )
+                el is Element.Group -> el.copy(children = visit(el.children))
+                else -> el
+            }
+        }
+        return visit(elements)
     }
 
-    /** Replace the bounds of a single element. */
+    /** Replace the bounds of a single element, wherever it lives in the tree. */
     fun setElementBounds(
         elements: List<Element>,
         id: String,
         bounds: Rect,
-    ): List<Element> = elements.map { if (it.id == id) it.withBounds(bounds) else it }
+    ): List<Element> = elements.mapElementById(id) { it.withBounds(bounds) }
 
     /** Replace the rotation of a single element (degrees). */
     fun setElementRotation(
         elements: List<Element>,
         id: String,
         degrees: Float,
-    ): List<Element> = elements.map { if (it.id == id) it.withRotation(degrees) else it }
+    ): List<Element> = elements.mapElementById(id) { it.withRotation(degrees) }
 
     /**
      * Recompute new bounds from a resize-handle drag and apply them. Single-
@@ -372,14 +400,77 @@ class UseCase {
         handle: ResizeHandle,
         pointer: Offset,
     ): List<Element> {
-        val target = elements.firstOrNull { it.id == id } ?: return elements
+        val target = elements.findElementById(id) ?: return elements
         val newBounds = resizeBounds(target.bounds(), target.rotation, handle, pointer)
         return setElementBounds(elements, id, newBounds)
     }
 
-    /** Delete every element whose id is in `ids`. */
+    /** Delete every element whose id is in `ids`, including subtrees. */
     fun deleteSelected(elements: List<Element>, ids: Set<String>): List<Element> =
-        elements.filter { it.id !in ids }
+        elements.removeElementsByIds(ids)
+
+    /**
+     * Group the selected direct children of [groupPath] into a new
+     * [Element.Group]. Requires at least two selections. The new group takes
+     * the topmost selected z-order slot; siblings are renumbered.
+     */
+    @OptIn(ExperimentalTime::class)
+    fun groupSelected(
+        elements: List<Element>,
+        groupPath: List<String>,
+        ids: Set<String>,
+    ): List<Element> {
+        val now = Clock.System.now().toEpochMilliseconds()
+        val scope = elements.childrenAt(groupPath)
+        val selected = scope.filter { it.id in ids }.sortedBy { it.zIndex }
+        if (selected.size < 2) return elements
+
+        val selectedIds = selected.mapTo(hashSetOf()) { it.id }
+        val ordered = scope.sortedBy { it.zIndex }
+        val topmostIndex = ordered.indexOfLast { it.id in selectedIds }
+        val group = Element.Group(
+            children = selected.mapIndexed { index, child ->
+                child.withZIndex(index).touched(now)
+            },
+            createdAt = now,
+            modifiedAt = now,
+        )
+        val rebuilt = buildList {
+            ordered.forEachIndexed { index, element ->
+                if (index == topmostIndex) add(group)
+                if (element.id !in selectedIds) add(element)
+            }
+            if (topmostIndex == -1) add(group)
+        }.mapIndexed { index, element -> element.withZIndex(index) }
+
+        return elements.replaceScopeChildren(groupPath, rebuilt)
+    }
+
+    /**
+     * Ungroup the single selected group at [groupPath]. The group's rotation is
+     * baked into its children so their visual position is unchanged.
+     */
+    fun ungroupSelected(
+        elements: List<Element>,
+        groupPath: List<String>,
+        ids: Set<String>,
+    ): List<Element> {
+        if (ids.size != 1) return elements
+        val scope = elements.childrenAt(groupPath)
+        val group = scope.firstOrNull { it.id == ids.first() } as? Element.Group ?: return elements
+
+        val pivot = group.bounds().center
+        val baked = group.children.map { it.bakedIntoParent(pivot, group.rotation) }
+        val ordered = scope.sortedBy { it.zIndex }
+        val rebuilt = buildList {
+            ordered.forEach { element ->
+                if (element.id == group.id) addAll(baked) else add(element)
+            }
+        }.sortedBy { it.zIndex }
+            .mapIndexed { index, element -> element.withZIndex(index) }
+
+        return elements.replaceScopeChildren(groupPath, rebuilt)
+    }
 
     /**
      * Remove every element whose body is within `radius` of `point`. Reuses the
@@ -409,6 +500,7 @@ class UseCase {
                 is Element.Shape -> el.copy(zIndex = next++).touched()
                 is Element.Image -> el.copy(zIndex = next++).touched()
                 is Element.Text -> el.copy(zIndex = next++).touched()
+                is Element.Group -> el.copy(zIndex = next++).touched()
             } else el
         }
     }
@@ -428,6 +520,7 @@ class UseCase {
                 is Element.Shape -> el.copy(zIndex = newZ).touched()
                 is Element.Image -> el.copy(zIndex = newZ).touched()
                 is Element.Text -> el.copy(zIndex = newZ).touched()
+                is Element.Group -> el.copy(zIndex = newZ).touched()
             } else el
         }
     }
@@ -437,8 +530,8 @@ class UseCase {
         elements: List<Element>,
         ids: Set<String>,
         color: Color,
-    ): List<Element> = elements.map { el ->
-        if (el.id !in ids) el else when (el) {
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
+        when (el) {
             is Element.Path -> el.copy(strokeColor = color).touched()
             is Element.Shape -> el.copy(strokeColor = color).touched()
             // Images have no stroke — recolor is a no-op rather than an error,
@@ -447,6 +540,7 @@ class UseCase {
             // Text reuses the "stroke color" intent as a unified tint so the
             // existing color picker recolors text without a separate intent.
             is Element.Text -> el.copy(color = color).touched()
+            is Element.Group -> el
         }
     }
 
@@ -459,12 +553,13 @@ class UseCase {
         elements: List<Element>,
         ids: Set<String>,
         color: Color?,
-    ): List<Element> = elements.map { el ->
-        if (el.id !in ids) el else when (el) {
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
+        when (el) {
             is Element.Shape -> el.copy(fillColor = color).touched()
             is Element.Path -> el
             is Element.Image -> el
             is Element.Text -> el
+            is Element.Group -> el
         }
     }
 
@@ -476,12 +571,13 @@ class UseCase {
         elements: List<Element>,
         ids: Set<String>,
         enabled: Boolean,
-    ): List<Element> = elements.map { el ->
-        if (el.id !in ids) el else when (el) {
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
+        when (el) {
             is Element.Shape -> el.copy(strokeEnabled = enabled).touched()
             is Element.Path -> el
             is Element.Image -> el
             is Element.Text -> el
+            is Element.Group -> el
         }
     }
 
@@ -490,8 +586,8 @@ class UseCase {
         elements: List<Element>,
         ids: Set<String>,
         width: Float,
-    ): List<Element> = elements.map { el ->
-        if (el.id !in ids) el else when (el) {
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
+        when (el) {
             // For Path: rewrite every sample's width to the new value so the
             // stroke becomes uniform. The user-facing "set stroke width" intent
             // is "make this stroke this thick everywhere," not "leave the
@@ -503,6 +599,7 @@ class UseCase {
             is Element.Shape -> el.copy(strokeWidth = width).touched()
             is Element.Image -> el
             is Element.Text -> el
+            is Element.Group -> el
         }
     }
 
@@ -514,8 +611,7 @@ class UseCase {
         elements: List<Element>,
         ids: Set<String>,
         radius: Float,
-    ): List<Element> = elements.map { el ->
-        if (el.id !in ids) return@map el
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
         if (el is Element.Shape && el.shapeType.supportsCornerRadius()) {
             el.copy(cornerRadius = radius).touched()
         } else el
@@ -526,13 +622,13 @@ class UseCase {
         elements: List<Element>,
         ids: Set<String>,
         style: StrokeStyle,
-    ): List<Element> = elements.map { el ->
-        if (el.id !in ids) return@map el
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
         when (el) {
             is Element.Shape -> el.copy(strokeStyle = style).touched()
             is Element.Path -> el.copy(strokeStyle = style).touched()
             is Element.Image -> el
             is Element.Text -> el
+            is Element.Group -> el
         }
     }
 
@@ -543,8 +639,8 @@ class UseCase {
         elements: List<Element>,
         id: String,
         newPoints: List<Offset>,
-    ): List<Element> = elements.map { el ->
-        if (el.id != id) el else when (el) {
+    ): List<Element> = elements.mapElementById(id) { el ->
+        when (el) {
             // setElementPoints today is only called by LINE/ARROW endpoint
             // dragging, but the sealed `when` forces a Path branch. Preserve
             // existing widths by index when the list length is unchanged; fall
@@ -561,6 +657,7 @@ class UseCase {
             // point-list intent doesn't apply. Treat as a no-op so multi-
             // selecting LINE / ARROW + Text still works.
             is Element.Text -> el
+            is Element.Group -> el
         }
     }
 
@@ -569,8 +666,8 @@ class UseCase {
         elements: List<Element>,
         id: String,
         bend: Offset,
-    ): List<Element> = elements.map { el ->
-        if (el.id == id && el is Element.Shape && el.shapeType.isLineLike()) {
+    ): List<Element> = elements.mapElementById(id) { el ->
+        if (el is Element.Shape && el.shapeType.isLineLike()) {
             el.copy(bend = bend).touched()
         } else el
     }
@@ -585,10 +682,21 @@ class UseCase {
     fun finalizeArrowBindings(
         elements: List<Element>,
         arrowId: String,
-    ): List<Element> {
-        val target = elements.firstOrNull { it.id == arrowId } as? Element.Shape ?: return elements
-        if (target.shapeType != ShapeType.ARROW || target.points.size < 2) return elements
-        val candidates = elements
+    ): List<Element> = finalizeArrowInScope(elements, arrowId)
+
+    private fun finalizeArrowInScope(scope: List<Element>, arrowId: String): List<Element> {
+        val target = scope.firstOrNull { it.id == arrowId } as? Element.Shape
+        if (target == null) {
+            return scope.map { element ->
+                if (element is Element.Group) {
+                    element.copy(children = finalizeArrowInScope(element.children, arrowId))
+                } else {
+                    element
+                }
+            }
+        }
+        if (target.shapeType != ShapeType.ARROW || target.points.size < 2) return scope
+        val candidates = scope
             .asSequence()
             .filterIsInstance<Element.Shape>()
             .filter { it.id != arrowId && it.shapeType.isBindable() }
@@ -621,7 +729,7 @@ class UseCase {
             defaultConnectorBend(startSnapped, endSnapped)
         } else target.bend
 
-        return elements.map { el ->
+        return scope.map { el ->
             if (el.id != arrowId) el
             else (el as Element.Shape).copy(
                 startBinding = startId,
@@ -635,38 +743,75 @@ class UseCase {
      * Update every arrow's endpoints so they terminate on the bound shape's
      * boundary along the line toward the other endpoint (or its bound center).
      * Idempotent — safe to call after any element mutation. Detaches bindings
-     * whose target no longer exists.
+     * whose target no longer exists. Bindings are resolved among siblings in
+     * the same group frame.
      */
-    fun propagateBindings(elements: List<Element>): List<Element> {
-        val byId = elements.associateBy { it.id }
-        return elements.map { el ->
-            if (el !is Element.Shape || el.shapeType != ShapeType.ARROW) return@map el
-            if (el.startBinding == null && el.endBinding == null) return@map el
-            if (el.points.size < 2) return@map el
-            val startTarget = el.startBinding?.let { byId[it] as? Element.Shape }
-            val endTarget = el.endBinding?.let { byId[it] as? Element.Shape }
+    fun propagateBindings(elements: List<Element>): List<Element> = propagateBindingsInScope(elements)
 
-            // Direction reference for boundary clipping: the OTHER endpoint's
-            // bound center if available, else its raw position. We compute the
-            // boundary intersection from each bound shape's center toward that
-            // reference point so the arrow visually starts/ends at the edge.
-            val endRef = endTarget?.bounds()?.center ?: el.points.last()
-            val startRef = startTarget?.bounds()?.center ?: el.points[0]
-            val newStart = startTarget?.connectorAnchor(endRef) ?: el.points[0]
-            val newEnd = endTarget?.connectorAnchor(startRef) ?: el.points.last()
-            val newStartBinding = if (startTarget == null) null else el.startBinding
-            val newEndBinding = if (endTarget == null) null else el.endBinding
-            // Skip touching the arrow when nothing actually changed — propagateBindings
-            // runs after every mutation and most calls are no-ops for any given arrow.
-            val unchanged = newStart == el.points[0] && newEnd == el.points.last() &&
-                newStartBinding == el.startBinding && newEndBinding == el.endBinding
-            if (unchanged) el else el.copy(
-                points = listOf(newStart, newEnd),
-                startBinding = newStartBinding,
-                endBinding = newEndBinding,
-            ).touched()
+    private fun propagateBindingsInScope(scope: List<Element>): List<Element> {
+        val byId = scope.filterIsInstance<Element.Shape>().associateBy { it.id }
+        return scope.map { el ->
+            when (el) {
+                is Element.Group -> el.copy(children = propagateBindingsInScope(el.children))
+                is Element.Shape -> {
+                    if (el.shapeType != ShapeType.ARROW ||
+                        (el.startBinding == null && el.endBinding == null) ||
+                        el.points.size < 2
+                    ) {
+                        return@map el
+                    }
+                    val startTarget = el.startBinding?.let { byId[it] }
+                    val endTarget = el.endBinding?.let { byId[it] }
+
+                    // Direction reference for boundary clipping: the OTHER endpoint's
+                    // bound center if available, else its raw position. We compute the
+                    // boundary intersection from each bound shape's center toward that
+                    // reference point so the arrow visually starts/ends at the edge.
+                    val endRef = endTarget?.bounds()?.center ?: el.points.last()
+                    val startRef = startTarget?.bounds()?.center ?: el.points[0]
+                    val newStart = startTarget?.connectorAnchor(endRef) ?: el.points[0]
+                    val newEnd = endTarget?.connectorAnchor(startRef) ?: el.points.last()
+                    val newStartBinding = if (startTarget == null) null else el.startBinding
+                    val newEndBinding = if (endTarget == null) null else el.endBinding
+                    // Skip touching the arrow when nothing actually changed — propagateBindings
+                    // runs after every mutation and most calls are no-ops for any given arrow.
+                    val unchanged = newStart == el.points[0] && newEnd == el.points.last() &&
+                        newStartBinding == el.startBinding && newEndBinding == el.endBinding
+                    if (unchanged) el else el.copy(
+                        points = listOf(newStart, newEnd),
+                        startBinding = newStartBinding,
+                        endBinding = newEndBinding,
+                    ).touched()
+                }
+                else -> el
+            }
         }
     }
+
+    /**
+     * Apply [transform] to selected elements. Selecting a group applies the
+     * transform to every descendant leaf; individual selections apply directly.
+     */
+    private fun applyStyleToSelection(
+        elements: List<Element>,
+        ids: Set<String>,
+        transform: (Element) -> Element,
+    ): List<Element> = elements.map { el ->
+        when {
+            el.id in ids -> applyToSubtree(el, transform)
+            el is Element.Group -> el.copy(
+                children = applyStyleToSelection(el.children, ids, transform),
+            )
+            else -> el
+        }
+    }
+
+    private fun applyToSubtree(element: Element, transform: (Element) -> Element): Element =
+        if (element is Element.Group) {
+            element.copy(children = element.children.map { applyToSubtree(it, transform) }).touched()
+        } else {
+            transform(element)
+        }
 }
 
 /**

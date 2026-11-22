@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import io.ak1.drawbox.PathCache
 import io.ak1.drawbox.TextLayoutCache
 import io.ak1.drawbox.domain.model.Element
-import io.ak1.drawbox.domain.model.bounds
+import io.ak1.drawbox.domain.model.visualAabb
 import io.ak1.drawbox.encodeToPng
 import io.ak1.drawbox.renderElement
 import kotlin.math.roundToInt
@@ -61,7 +61,7 @@ object PngExporter {
     ): ByteArray? {
         if (elements.isEmpty()) return null
 
-        val boxes = elements.map { it.bounds() }
+        val boxes = elements.map { it.visualAabb() }
         val left = boxes.minOf { it.left } - padding
         val top = boxes.minOf { it.top } - padding
         val right = boxes.maxOf { it.right } + padding

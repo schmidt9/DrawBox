@@ -177,6 +177,11 @@ data class ElementDto(
     val textTopLeft: String? = null,
     /** World-space wrap width for a text element. */
     val wrapWidth: Float? = null,
+    /**
+     * Nested children of a `"Group"` element, in the group's local coordinate
+     * frame. Null/absent on leaf elements and in legacy files.
+     */
+    val children: List<ElementDto>? = null,
 )
 
 fun Element.toDto(): ElementDto = when (this) {
@@ -254,6 +259,19 @@ fun Element.toDto(): ElementDto = when (this) {
         createdAt = createdAt.takeIf { it != 0L },
         modifiedAt = modifiedAt.takeIf { it != 0L },
         strokeEnabled = false.takeIf { !strokeEnabled },
+    )
+    is Element.Group -> ElementDto(
+        id = id,
+        type = "Group",
+        zIndex = zIndex,
+        points = emptyList(),
+        // Groups paint nothing; emit neutral values for the required fields.
+        strokeColor = "#00000000",
+        strokeWidth = 0f,
+        rotation = rotation.takeIf { it != 0f },
+        createdAt = createdAt.takeIf { it != 0L },
+        modifiedAt = modifiedAt.takeIf { it != 0L },
+        children = children.map { it.toDto() },
     )
 }
 
@@ -342,6 +360,14 @@ fun ElementDto.toElement(): Element = when (type) {
         createdAt = createdAt ?: 0L,
         modifiedAt = modifiedAt ?: createdAt ?: 0L,
     )
+    "Group" -> Element.Group(
+        id = id,
+        zIndex = zIndex,
+        rotation = rotation ?: 0f,
+        createdAt = createdAt ?: 0L,
+        modifiedAt = modifiedAt ?: createdAt ?: 0L,
+        children = children.orEmpty().map { it.toElement() },
+    )
     else -> Element.Path(
         id = id,
         samples = (samples?.map { it.toPathSample(fallbackWidth = strokeWidth) }
@@ -403,12 +429,79 @@ data class SerializableElement(
     val alignment: String? = null,
     val textTopLeft: String? = null,
     val wrapWidth: Float? = null,
+    val children: List<SerializableElement>? = null,
 )
 
 @kotlinx.serialization.Serializable
 data class SerializableDrawing(
     val bgColor: String,
     val elements: List<SerializableElement>,
+)
+
+private fun ElementDto.toSerializableElement(): SerializableElement = SerializableElement(
+    id = id,
+    type = type,
+    zIndex = zIndex,
+    points = points,
+    strokeColor = strokeColor,
+    strokeWidth = strokeWidth,
+    alpha = alpha,
+    shapeType = shapeType,
+    fillColor = fillColor,
+    rotation = rotation,
+    cornerRadius = cornerRadius,
+    strokeStyle = strokeStyle,
+    bend = bend,
+    startBinding = startBinding,
+    endBinding = endBinding,
+    createdAt = createdAt,
+    modifiedAt = modifiedAt,
+    samples = samples,
+    strokeEnabled = strokeEnabled,
+    imageData = imageData,
+    intrinsicWidth = intrinsicWidth,
+    intrinsicHeight = intrinsicHeight,
+    opacity = opacity,
+    text = text,
+    fontFamilyKey = fontFamilyKey,
+    fontSize = fontSize,
+    alignment = alignment,
+    textTopLeft = textTopLeft,
+    wrapWidth = wrapWidth,
+    children = children?.map { it.toSerializableElement() },
+)
+
+private fun SerializableElement.toElementDto(): ElementDto = ElementDto(
+    id = id,
+    type = type,
+    zIndex = zIndex,
+    points = points,
+    strokeColor = strokeColor,
+    strokeWidth = strokeWidth,
+    alpha = alpha,
+    shapeType = shapeType,
+    fillColor = fillColor,
+    rotation = rotation,
+    cornerRadius = cornerRadius,
+    strokeStyle = strokeStyle,
+    bend = bend,
+    startBinding = startBinding,
+    endBinding = endBinding,
+    createdAt = createdAt,
+    modifiedAt = modifiedAt,
+    samples = samples,
+    strokeEnabled = strokeEnabled,
+    imageData = imageData,
+    intrinsicWidth = intrinsicWidth,
+    intrinsicHeight = intrinsicHeight,
+    opacity = opacity,
+    text = text,
+    fontFamilyKey = fontFamilyKey,
+    fontSize = fontSize,
+    alignment = alignment,
+    textTopLeft = textTopLeft,
+    wrapWidth = wrapWidth,
+    children = children?.map { it.toElementDto() },
 )
 
 object DrawingSerializer {
@@ -418,39 +511,7 @@ object DrawingSerializer {
         val dto = payLoad.toDto()
         val serializableDrawing = SerializableDrawing(
             bgColor = dto.bgColor,
-            elements = dto.elements.map { element ->
-                SerializableElement(
-                    id = element.id,
-                    type = element.type,
-                    zIndex = element.zIndex,
-                    points = element.points,
-                    strokeColor = element.strokeColor,
-                    strokeWidth = element.strokeWidth,
-                    alpha = element.alpha,
-                    shapeType = element.shapeType,
-                    fillColor = element.fillColor,
-                    rotation = element.rotation,
-                    cornerRadius = element.cornerRadius,
-                    strokeStyle = element.strokeStyle,
-                    bend = element.bend,
-                    startBinding = element.startBinding,
-                    endBinding = element.endBinding,
-                    createdAt = element.createdAt,
-                    modifiedAt = element.modifiedAt,
-                    samples = element.samples,
-                    strokeEnabled = element.strokeEnabled,
-                    imageData = element.imageData,
-                    intrinsicWidth = element.intrinsicWidth,
-                    intrinsicHeight = element.intrinsicHeight,
-                    opacity = element.opacity,
-                    text = element.text,
-                    fontFamilyKey = element.fontFamilyKey,
-                    fontSize = element.fontSize,
-                    alignment = element.alignment,
-                    textTopLeft = element.textTopLeft,
-                    wrapWidth = element.wrapWidth,
-                )
-            },
+            elements = dto.elements.map { it.toSerializableElement() },
         )
         return json.encodeToString(SerializableDrawing.serializer(), serializableDrawing)
     }
@@ -459,39 +520,7 @@ object DrawingSerializer {
         val serializableDrawing = json.decodeFromString(SerializableDrawing.serializer(), jsonString)
         val dto = DrawingExportDto(
             bgColor = serializableDrawing.bgColor,
-            elements = serializableDrawing.elements.map { element ->
-                ElementDto(
-                    id = element.id,
-                    type = element.type,
-                    zIndex = element.zIndex,
-                    points = element.points,
-                    strokeColor = element.strokeColor,
-                    strokeWidth = element.strokeWidth,
-                    alpha = element.alpha,
-                    shapeType = element.shapeType,
-                    fillColor = element.fillColor,
-                    rotation = element.rotation,
-                    cornerRadius = element.cornerRadius,
-                    strokeStyle = element.strokeStyle,
-                    bend = element.bend,
-                    startBinding = element.startBinding,
-                    endBinding = element.endBinding,
-                    createdAt = element.createdAt,
-                    modifiedAt = element.modifiedAt,
-                    samples = element.samples,
-                    strokeEnabled = element.strokeEnabled,
-                    imageData = element.imageData,
-                    intrinsicWidth = element.intrinsicWidth,
-                    intrinsicHeight = element.intrinsicHeight,
-                    opacity = element.opacity,
-                    text = element.text,
-                    fontFamilyKey = element.fontFamilyKey,
-                    fontSize = element.fontSize,
-                    alignment = element.alignment,
-                    textTopLeft = element.textTopLeft,
-                    wrapWidth = element.wrapWidth,
-                )
-            },
+            elements = serializableDrawing.elements.map { it.toElementDto() },
         )
         return dto.toPayLoad()
     }

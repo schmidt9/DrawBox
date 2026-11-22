@@ -295,6 +295,25 @@ sealed class Element {
         override val createdAt: Long = 0L,
         override val modifiedAt: Long = 0L,
     ) : Element()
+
+    /**
+     * A container of elements manipulated as one unit. Children are stored in
+     * this group's local frame (before [rotation]); nesting is supported.
+     * Groups have no paint of their own — only their children are rendered.
+     *
+     * @property children Elements and nested groups in local-frame coordinates.
+     * @property rotation Rotation around [bounds] center, persisted with the
+     *   drawing so selection chrome stays rotated across enter/exit.
+     */
+    data class Group(
+        override val id: String = Uuid.random().toString(),
+        override val type: String = "Group",
+        val children: List<Element>,
+        override val zIndex: Int = 0,
+        override val rotation: Float = 0f,
+        override val createdAt: Long = 0L,
+        override val modifiedAt: Long = 0L,
+    ) : Element()
 }
 
 /**
@@ -316,6 +335,7 @@ fun Element.touched(now: Long = kotlin.time.Clock.System.now().toEpochMillisecon
         is Element.Shape -> copy(modifiedAt = now)
         is Element.Image -> copy(modifiedAt = now)
         is Element.Text -> copy(modifiedAt = now)
+        is Element.Group -> copy(modifiedAt = now)
     }
 
 /**

@@ -25,6 +25,13 @@ import kotlin.math.sqrt
 fun Element.bounds(): Rect = when (this) {
     is Element.Path -> pointsBounds(positions)
     is Element.Image -> pointsBounds(points)
+    is Element.Group -> {
+        if (children.isEmpty()) {
+            Rect.Zero
+        } else {
+            children.map { it.visualAabb() }.reduce { acc, r -> acc.union(r) }
+        }
+    }
     is Element.Text -> Rect(
         left = topLeft.x,
         top = topLeft.y,
@@ -47,6 +54,34 @@ fun Element.bounds(): Rect = when (this) {
             pointsBounds(points)
         }
     }
+}
+
+private fun Rect.union(other: Rect): Rect = Rect(
+    left = min(left, other.left),
+    top = min(top, other.top),
+    right = max(right, other.right),
+    bottom = max(bottom, other.bottom),
+)
+
+/**
+ * Axis-aligned bounds of the element's rendered shape in its parent frame —
+ * [bounds] with the element's own rotation applied around its center.
+ */
+fun Element.visualAabb(): Rect {
+    val b = bounds()
+    if (rotation == 0f) return b
+    val corners = listOf(
+        b.topLeft,
+        Offset(b.right, b.top),
+        b.bottomRight,
+        Offset(b.left, b.bottom),
+    ).map { rotateAround(it, b.center, rotation) }
+    return Rect(
+        left = corners.minOf { it.x },
+        top = corners.minOf { it.y },
+        right = corners.maxOf { it.x },
+        bottom = corners.maxOf { it.y },
+    )
 }
 
 private fun lineArrowBounds(shape: Element.Shape): Rect {
@@ -300,6 +335,7 @@ fun Element.hitTest(point: Offset, tolerance: Float = 8f): Boolean {
         is Element.Shape -> hitTestShape(this, local, b, tolerance)
         is Element.Image -> b.inflate(tolerance).contains(local)
         is Element.Text -> b.inflate(tolerance).contains(local)
+        is Element.Group -> children.any { it.hitTest(local, tolerance) }
     }
 }
 
@@ -453,6 +489,7 @@ fun Element.translate(delta: Offset): Element = when (this) {
     is Element.Shape -> copy(points = points.map { it + delta }).touched()
     is Element.Image -> copy(points = points.map { it + delta }).touched()
     is Element.Text -> copy(topLeft = topLeft + delta).touched()
+    is Element.Group -> copy(children = children.map { it.translate(delta) }).touched()
 }
 
 /**
@@ -475,6 +512,20 @@ fun Element.withBounds(newBounds: Rect): Element {
         is Element.Image -> copy(
             points = listOf(safeBounds.topLeft, safeBounds.bottomRight),
         ).touched()
+        is Element.Group -> {
+            val old = bounds()
+            copy(
+                children = children.map { child ->
+                    val cb = child.bounds()
+                    child.withBounds(
+                        Rect(
+                            mapCorner(cb.topLeft, old, safeBounds),
+                            mapCorner(cb.bottomRight, old, safeBounds),
+                        ),
+                    )
+                },
+            ).touched()
+        }
         // Resize for text only honors the X extents (topLeft.x + wrapWidth)
         // and the topLeft.y. Bottom-edge drags are silently ignored — the
         // renderer owns measuredHeight and will refresh it on the next
@@ -548,6 +599,19 @@ fun Element.withRotation(degrees: Float): Element = when (this) {
     is Element.Shape -> copy(rotation = degrees).touched()
     is Element.Image -> copy(rotation = degrees).touched()
     is Element.Text -> copy(rotation = degrees).touched()
+    is Element.Group -> copy(rotation = degrees).touched()
+}
+
+/**
+ * Compose a parent rotation of [degrees] around [pivot] into this element's
+ * rendered transform, returning an equivalent standalone element. Used when a
+ * rotated group is ungrouped. Exact for nested groups: geometry is translated
+ * so the composed rotation center is preserved, and the angle is added.
+ */
+fun Element.bakedIntoParent(pivot: Offset, degrees: Float): Element {
+    if (degrees == 0f) return this
+    val delta = rotateAround(bounds().center, pivot, degrees) - bounds().center
+    return translate(delta).withRotation(rotation + degrees)
 }
 
 /**

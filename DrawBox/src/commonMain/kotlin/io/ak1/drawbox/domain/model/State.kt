@@ -131,6 +131,12 @@ data class State(
     val history: List<List<Element>> = emptyList(),
     val future: List<List<Element>> = emptyList(),
     val selectedIds: Set<String> = emptySet(),
+    /**
+     * IDs of entered groups, outermost first. Transient selection scope: while
+     * non-empty, selection targets are direct children of the innermost group.
+     * Not serialized; cleared by undo/redo, import, and mode changes.
+     */
+    val groupPath: List<String> = emptyList(),
     val marqueeRect: Rect? = null,
     /**
      * ID of the polygon currently being built in [Mode.POLYGON], if any.

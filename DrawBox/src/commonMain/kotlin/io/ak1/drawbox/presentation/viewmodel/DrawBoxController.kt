@@ -27,6 +27,7 @@ import androidx.compose.ui.text.TextMeasurer
 import io.ak1.drawbox.domain.model.BackgroundPattern
 import io.ak1.drawbox.domain.model.PayLoad
 import io.ak1.drawbox.domain.model.DrawingSerializer
+import io.ak1.drawbox.domain.model.resolveTap
 
 /**
  * ViewModel orchestrating drawing state and side effects.
@@ -175,13 +176,21 @@ class DrawBoxController(
             is Intent.LoadDrawing -> emitLoadEvent()
             // Double-tap in SELECT mode: open the editor for the hit text.
             is Intent.RequestTextEditAt ->
-                reducer.hitTopmost(prev.elements, intent.offset, intent.tolerance)
+                prev.elements.resolveTap(prev.groupPath, intent.offset, intent.tolerance)
+                    .target
+                    .let { it as? Element.Text }
+                    ?.let { _events.tryEmit(Event.TextEditRequested(it.id)) }
+            is Intent.DoubleTapAt ->
+                prev.elements.resolveTap(prev.groupPath, intent.offset, intent.tolerance)
+                    .target
                     .let { it as? Element.Text }
                     ?.let { _events.tryEmit(Event.TextEditRequested(it.id)) }
             // Second tap on an already-sole-selected text opens the editor too
             // (tldraw/Figma pattern). `prev` is the pre-reduce selection.
             is Intent.SelectAt -> {
-                val hit = reducer.hitTopmost(prev.elements, intent.offset, intent.tolerance)
+                val hit = prev.elements
+                    .resolveTap(prev.groupPath, intent.offset, intent.tolerance)
+                    .target
                 if (hit is Element.Text && prev.selectedIds == setOf(hit.id)) {
                     _events.tryEmit(Event.TextEditRequested(hit.id))
                 }
@@ -361,6 +370,15 @@ class DrawBoxController(
 
     /** Delete every selected element. */
     fun deleteSelected() = onIntent(Intent.DeleteSelected)
+
+    /** Group the selected direct children of the current scope. */
+    fun groupSelection() = onIntent(Intent.GroupSelected)
+
+    /** Ungroup the single selected group at the current scope. */
+    fun ungroupSelection() = onIntent(Intent.UngroupSelected)
+
+    /** Leave the innermost entered group one level. */
+    fun exitGroup() = onIntent(Intent.ExitGroup)
 
     /** Recolor every selected element's stroke. */
     fun setSelectionColor(color: Color) = onIntent(Intent.SetSelectedStrokeColor(color))

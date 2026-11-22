@@ -350,6 +350,17 @@ class ComplexSceneExportTest {
                     assertEquals(expected.rotation, a.rotation, "[$i] rotation")
                     assertEquals(expected.zIndex, a.zIndex, "[$i] zIndex")
                 }
+                is Element.Group -> {
+                    val a = actual as Element.Group
+                    assertEquals(expected.id, a.id, "[$i] id")
+                    assertEquals(expected.rotation, a.rotation, "[$i] rotation")
+                    assertEquals(expected.zIndex, a.zIndex, "[$i] zIndex")
+                    assertEquals(
+                        expected.children.map { it.id },
+                        a.children.map { it.id },
+                        "[$i] children",
+                    )
+                }
             }
         }
     }

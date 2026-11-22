@@ -94,14 +94,19 @@ import io.ak1.drawbox.domain.model.Viewport
 import io.ak1.drawbox.domain.model.angleFromCenter
 import io.ak1.drawbox.domain.model.bezierMidpoint
 import io.ak1.drawbox.domain.model.bounds
+import io.ak1.drawbox.domain.model.containsAnyId
 import io.ak1.drawbox.domain.model.positions
 import io.ak1.drawbox.domain.model.controlPoint
 import io.ak1.drawbox.domain.model.distance
 import io.ak1.drawbox.domain.model.effectiveMode
-import io.ak1.drawbox.domain.model.hitTest
+import io.ak1.drawbox.domain.model.findElementById
+import io.ak1.drawbox.domain.model.flattenElements
+import io.ak1.drawbox.domain.model.pointerInElementParentFrame
+import io.ak1.drawbox.domain.model.resolveHitPath
+import io.ak1.drawbox.domain.model.resolveTap
 import io.ak1.drawbox.domain.model.resizeBoundsForElement
 import io.ak1.drawbox.domain.model.rotateAround
-import io.ak1.drawbox.domain.model.topmostHit
+import io.ak1.drawbox.domain.model.topLevelAncestorId
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.absoluteValue
@@ -239,7 +244,7 @@ fun DrawBox(
     // frame has the correct geometry. The 0.5px drift gate in both the
     // dispatch and the reducer ensures fixed-point convergence in one step.
     LaunchedEffect(state.elements, textMeasurer) {
-        state.elements.forEach { el ->
+        state.elements.flattenElements().forEach { el ->
             if (el !is Element.Text) return@forEach
             val layout = textCache.layoutFor(
                 id = el.id,
@@ -333,7 +338,18 @@ fun DrawBox(
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
-                if (event.key == Key.Spacebar) {
+                if (event.key == Key.Escape) {
+                    if (event.type == KeyEventType.KeyDown) {
+                        if (latestState.groupPath.isNotEmpty()) {
+                            latestOnIntent(Intent.ExitGroup)
+                        } else {
+                            latestOnIntent(Intent.ClearSelection)
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                } else if (event.key == Key.Spacebar) {
                     when (event.type) {
                         KeyEventType.KeyDown -> {
                             if (!latestState.tempPanActive) {
@@ -523,15 +539,15 @@ fun DrawBox(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onDoubleTap = { screenPos ->
-                        // Double-tap a text element in SELECT mode → request
-                        // in-place edit. The controller resolves the hit and
-                        // emits Event.TextEditRequested for the host to open its
-                        // editor; non-text hits are no-ops.
+                        // Double-tap enters a group (selecting the clicked
+                        // direct child) or requests in-place text editing at
+                        // the current scope. The controller emits
+                        // Event.TextEditRequested for hosts with an editor.
                         val s = latestState
                         if (s.effectiveMode == Mode.SELECT) {
                             val world = s.viewport.screenToWorld(screenPos)
                             val tol = pickTolerancePx / s.viewport.scale
-                            latestOnIntent(Intent.RequestTextEditAt(world, tol))
+                            latestOnIntent(Intent.DoubleTapAt(world, tol))
                         }
                     },
                     onTap = { screenPos ->
@@ -674,7 +690,7 @@ fun DrawBox(
                         }
                         val maybeEndpoint = interaction as? SelectionInteraction.LineEndpoint
                         if (maybeEndpoint != null) {
-                            val target = s.elements.firstOrNull { it.id == maybeEndpoint.elementId }
+                            val target = s.elements.findElementById(maybeEndpoint.elementId)
                             if (target is Element.Shape && target.shapeType == ShapeType.ARROW) {
                                 latestOnIntent(Intent.FinalizeArrowBindings(target.id))
                             }
@@ -727,31 +743,43 @@ fun DrawBox(
                                 val rot = i.originalElement.rotation
                                 val worldOffset = if (rot == 0f) localOffset
                                     else rotateAround(localOffset, Offset.Zero, rot)
+                                val pointerLocal = s.elements.pointerInElementParentFrame(
+                                    i.elementId, world,
+                                )
                                 val newBounds = resizeBoundsForElement(
-                                    i.originalElement, i.handle, world - worldOffset,
+                                    i.originalElement, i.handle, pointerLocal - worldOffset,
                                 )
                                 latestOnIntent(Intent.SetElementBounds(i.elementId, newBounds))
                             }
                             is SelectionInteraction.Rotate -> {
-                                val current = angleFromCenter(i.center, world)
+                                val pointerLocal = s.elements.pointerInElementParentFrame(
+                                    i.elementId, world,
+                                )
+                                val current = angleFromCenter(i.center, pointerLocal)
                                 val delta = current - i.initialAngle
                                 latestOnIntent(Intent.SetElementRotation(
                                     i.elementId, i.originalRotation + delta,
                                 ))
                             }
                             is SelectionInteraction.LineEndpoint -> {
-                                val target = s.elements.firstOrNull { it.id == i.elementId }
+                                val pointerLocal = s.elements.pointerInElementParentFrame(
+                                    i.elementId, world,
+                                )
+                                val target = s.elements.findElementById(i.elementId)
                                 if (target is Element.Shape && target.points.size >= 2) {
                                     val newPoints = if (i.isStart) {
-                                        listOf(world, target.points.last())
+                                        listOf(pointerLocal, target.points.last())
                                     } else {
-                                        listOf(target.points[0], world)
+                                        listOf(target.points[0], pointerLocal)
                                     }
                                     latestOnIntent(Intent.SetElementPoints(i.elementId, newPoints))
                                 }
                             }
                             is SelectionInteraction.LineBend -> {
-                                val target = s.elements.firstOrNull { it.id == i.elementId }
+                                val pointerLocal = s.elements.pointerInElementParentFrame(
+                                    i.elementId, world,
+                                )
+                                val target = s.elements.findElementById(i.elementId)
                                 if (target is Element.Shape && target.points.size >= 2) {
                                     val start = target.points[0]
                                     val end = target.points.last()
@@ -760,8 +788,8 @@ fun DrawBox(
                                     val midX = (start.x + end.x) * 0.5f
                                     val midY = (start.y + end.y) * 0.5f
                                     val newBend = Offset(
-                                        2f * (world.x - midX),
-                                        2f * (world.y - midY),
+                                        2f * (pointerLocal.x - midX),
+                                        2f * (pointerLocal.y - midY),
                                     )
                                     latestOnIntent(Intent.SetLineBend(i.elementId, newBend))
                                 }
@@ -818,7 +846,7 @@ fun DrawBox(
                         return@awaitEachGesture
                     }
 
-                    onDragStart(if (drawing) down.position else firstDrag.position)
+                    onDragStart(down.position)
                     onDrag(firstDrag, if (drawing) firstDrag.positionChange() else overSlop)
                     if (drawing) firstDrag.consume()
 
@@ -846,6 +874,8 @@ fun DrawBox(
             } else {
                 when (state.effectiveMode) {
                     Mode.SELECT -> state.selectedIds
+                        .mapNotNull { state.elements.topLevelAncestorId(it) }
+                        .toSet()
                     Mode.PAN -> emptySet()
                     // The eraser removes elements from the static set on each
                     // tick. Surviving elements are unchanged, so leave activeIds
@@ -867,6 +897,12 @@ fun DrawBox(
                 }
             }
 
+            // A hidden nested text must invalidate its top-level ancestor group,
+            // because the cached layer contains the whole group's pixels.
+            val hiddenTopLevelIds = hiddenElementIds
+                .map { hidden -> state.elements.topLevelAncestorId(hidden) ?: hidden }
+                .toSet()
+
             // Freshness check on the cached layer. Walks orderedElements once,
             // comparing non-active and non-hidden entries against
             // lastRecordedStaticRefs by reference (allocation-free). Hidden
@@ -878,7 +914,7 @@ fun DrawBox(
                 staticRefsMatch(
                     orderedElements,
                     activeIds,
-                    hiddenElementIds,
+                    hiddenTopLevelIds,
                     lastRecordedStaticRefs,
                 )
 
@@ -893,15 +929,18 @@ fun DrawBox(
                         scale(vp.scale, vp.scale, pivot = Offset.Zero)
                     }) {
                         orderedElements.forEach { el ->
-                            if (el.id !in activeIds && el.id !in hiddenElementIds) {
-                                renderElement(el, pathCache, imageCache, textCache, textMeasurer, vp.scale)
+                            if (el.id !in activeIds && el.id !in hiddenTopLevelIds) {
+                                renderElement(
+                                    el, pathCache, imageCache, textCache, textMeasurer, vp.scale,
+                                    hiddenElementIds,
+                                )
                             }
                         }
                     }
                 }
                 lastRecordedVp = vp
                 lastRecordedStaticRefs = orderedElements
-                    .filter { it.id !in activeIds && it.id !in hiddenElementIds }
+                    .filter { it.id !in activeIds && it.id !in hiddenTopLevelIds }
             }
 
             // Play the cached static layer. No transform — it was baked in at
@@ -916,7 +955,12 @@ fun DrawBox(
             }) {
                 if (activeIds.isNotEmpty()) {
                     orderedElements.forEach { el ->
-                        if (el.id in activeIds && el.id !in hiddenElementIds) renderElement(el, pathCache, imageCache, textCache, textMeasurer, vp.scale)
+                        if (el.id in activeIds && el.id !in hiddenTopLevelIds) {
+                            renderElement(
+                                el, pathCache, imageCache, textCache, textMeasurer, vp.scale,
+                                hiddenElementIds,
+                            )
+                        }
                     }
                 }
                 drawSelectionChrome(
@@ -1121,21 +1165,25 @@ private fun classifySelection(
 ): SelectionInteraction {
     // Single-selection: check shape-specific handles first.
     if (state.selectedIds.size == 1) {
-        val element = state.elements.firstOrNull { it.id in state.selectedIds }
+        val element = state.elements.findElementById(state.selectedIds.first())
         if (element != null) {
+            // Handles live in the selected element's parent frame; ancestor
+            // group rotations must be undone before hit testing.
+            val pointerLocal = state.elements
+                .pointerInElementParentFrame(element.id, pointerWorld)
             // LINE / ARROW use a 3-dot chrome: start, end, bend midpoint.
             if (element is Element.Shape && element.shapeType.isLineLike() &&
                 element.points.size >= 2
             ) {
                 val start = element.points[0]
                 val end = element.points.last()
-                if (distance(pointerWorld, start) <= handleHitWorld) {
+                if (distance(pointerLocal, start) <= handleHitWorld) {
                     return SelectionInteraction.LineEndpoint(element.id, isStart = true)
                 }
-                if (distance(pointerWorld, end) <= handleHitWorld) {
+                if (distance(pointerLocal, end) <= handleHitWorld) {
                     return SelectionInteraction.LineEndpoint(element.id, isStart = false)
                 }
-                if (distance(pointerWorld, element.bezierMidpoint()) <= handleHitWorld) {
+                if (distance(pointerLocal, element.bezierMidpoint()) <= handleHitWorld) {
                     return SelectionInteraction.LineBend(element.id)
                 }
                 // Fall through: drag on the line body = move existing selection.
@@ -1150,16 +1198,16 @@ private fun classifySelection(
                     bottom = tight.bottom + paddingWorld,
                 )
                 val rotHandle = rotationHandleWorld(b, element.rotation, rotationOffsetWorld)
-                if (distance(pointerWorld, rotHandle) <= handleHitWorld) {
+                if (distance(pointerLocal, rotHandle) <= handleHitWorld) {
                     return SelectionInteraction.Rotate(
                         elementId = element.id,
                         center = b.center,
-                        initialAngle = angleFromCenter(b.center, pointerWorld),
+                        initialAngle = angleFromCenter(b.center, pointerLocal),
                         originalRotation = element.rotation,
                     )
                 }
                 for ((h, p) in resizeHandlesWorld(b, element.rotation)) {
-                    if (distance(pointerWorld, p) <= handleHitWorld) {
+                    if (distance(pointerLocal, p) <= handleHitWorld) {
                         return SelectionInteraction.Resize(
                             elementId = element.id,
                             handle = h,
@@ -1170,12 +1218,18 @@ private fun classifySelection(
             }
         }
     }
-    // Drag inside already-selected → move existing selection.
-    if (state.elements.any { it.id in state.selectedIds && it.hitTest(pointerWorld, pickToleranceWorld) }) {
+    // Drag inside already-selected → move existing selection. Resolve the hit
+    // path so nested (entered-group) selections work.
+    val hitPath = state.elements.resolveHitPath(pointerWorld, pickToleranceWorld)
+    if (hitPath.any { it.id in state.selectedIds }) {
         return SelectionInteraction.Move
     }
     // Drag on unselected element → select-then-move.
-    val any = topmostHit(state.elements, pointerWorld, pickToleranceWorld)
+    val any = state.elements.resolveTap(
+        state.groupPath,
+        pointerWorld,
+        pickToleranceWorld,
+    ).target
     if (any != null) return SelectionInteraction.SelectAndMove
     // Empty space → marquee.
     return SelectionInteraction.Marquee(pointerWorld)
@@ -1282,24 +1336,47 @@ private fun DrawScope.drawSelectionChrome(
     hiddenElementIds: Set<String> = emptySet(),
 ) {
     val rotationOffsetWorld = rotationOffsetPx * inverseScale
-    state.elements
-        .asSequence()
-        .filter { it.id in state.selectedIds && it.id !in hiddenElementIds }
-        .forEach { el ->
-            // LINE / ARROW get a minimal 3-dot chrome: start, end, and bend midpoint.
-            if (el is Element.Shape && el.shapeType.isLineLike() && el.points.size >= 2) {
-                drawLineSelectionChrome(el, metrics, inverseScale)
-                return@forEach
-            }
-            val b = el.bounds()
-            if (el.rotation == 0f) {
+
+    fun drawElementChrome(element: Element) {
+        // LINE / ARROW get a minimal 3-dot chrome: start, end, and bend midpoint.
+        if (element is Element.Shape && element.shapeType.isLineLike() &&
+            element.points.size >= 2
+        ) {
+            drawLineSelectionChrome(element, metrics, inverseScale)
+            return
+        }
+        val b = element.bounds()
+        if (element.rotation == 0f) {
+            drawSelectionForElement(b, metrics, rotationOffsetWorld, inverseScale)
+        } else {
+            withTransform({ rotate(element.rotation, pivot = b.center) }) {
                 drawSelectionForElement(b, metrics, rotationOffsetWorld, inverseScale)
-            } else {
-                withTransform({ rotate(el.rotation, pivot = b.center) }) {
-                    drawSelectionForElement(b, metrics, rotationOffsetWorld, inverseScale)
-                }
             }
         }
+    }
+
+    fun visit(element: Element) {
+        if (element is Element.Group) {
+            if (element.id in state.selectedIds && element.id !in hiddenElementIds) {
+                // A selected group gets one aggregate box; its children are not
+                // individually selected.
+                drawElementChrome(element)
+                return
+            }
+            if (!element.containsAnyId(state.selectedIds)) return
+            if (element.rotation == 0f) {
+                element.children.forEach(::visit)
+            } else {
+                withTransform({ rotate(element.rotation, pivot = element.bounds().center) }) {
+                    element.children.forEach(::visit)
+                }
+            }
+        } else if (element.id in state.selectedIds && element.id !in hiddenElementIds) {
+            drawElementChrome(element)
+        }
+    }
+
+    state.elements.forEach(::visit)
     state.marqueeRect?.let { rect ->
         val r = Rect(
             left = minOf(rect.left, rect.right),
@@ -1512,12 +1589,19 @@ internal fun DrawScope.renderElement(
     textCache: TextLayoutCache? = null,
     textMeasurer: androidx.compose.ui.text.TextMeasurer? = null,
     viewportScale: Float = 1f,
+    hiddenElementIds: Set<String> = emptySet(),
 ) {
     if (element.rotation == 0f) {
-        renderElementContent(element, pathCache, imageCache, textCache, textMeasurer, viewportScale)
+        renderElementContent(
+            element, pathCache, imageCache, textCache, textMeasurer, viewportScale,
+            hiddenElementIds,
+        )
     } else {
         withTransform({ rotate(element.rotation, pivot = element.bounds().center) }) {
-            renderElementContent(element, pathCache, imageCache, textCache, textMeasurer, viewportScale)
+            renderElementContent(
+                element, pathCache, imageCache, textCache, textMeasurer, viewportScale,
+                hiddenElementIds,
+            )
         }
     }
 }
@@ -1529,6 +1613,7 @@ private fun DrawScope.renderElementContent(
     textCache: TextLayoutCache?,
     textMeasurer: androidx.compose.ui.text.TextMeasurer?,
     viewportScale: Float,
+    hiddenElementIds: Set<String> = emptySet(),
 ) {
     when (element) {
         is Element.Path -> {
@@ -1580,6 +1665,23 @@ private fun DrawScope.renderElementContent(
         }
         is Element.Text -> {
             drawTextElement(element, textCache, textMeasurer)
+        }
+        is Element.Group -> {
+            element.children
+                .sortedByZIndexIfNeeded()
+                .forEach { child ->
+                    if (child.id !in hiddenElementIds) {
+                        renderElement(
+                            child,
+                            pathCache,
+                            imageCache,
+                            textCache,
+                            textMeasurer,
+                            viewportScale,
+                            hiddenElementIds,
+                        )
+                    }
+                }
         }
     }
 }

@@ -8,7 +8,13 @@ import io.ak1.drawbox.domain.model.Mode
 import io.ak1.drawbox.domain.model.State
 import io.ak1.drawbox.domain.model.ToolSettings
 import io.ak1.drawbox.domain.model.Viewport
+import io.ak1.drawbox.domain.model.allElementIds
+import io.ak1.drawbox.domain.model.childrenAt
+import io.ak1.drawbox.domain.model.findElementById
+import io.ak1.drawbox.domain.model.flattenElements
 import io.ak1.drawbox.domain.model.persistsSettings
+import io.ak1.drawbox.domain.model.resolveTap
+import io.ak1.drawbox.domain.model.sanitizeGroupPath
 import io.ak1.drawbox.domain.usecase.UseCase
 
 /**
@@ -105,7 +111,7 @@ class Reducer(
             // frames don't generate State copies (recompositions, listener
             // wakeups, sync-layer chatter). The 0.5px threshold matches the
             // renderer's drift gate.
-            val target = state.elements.firstOrNull { it.id == intent.id } as? Element.Text
+            val target = state.elements.findElementById(intent.id) as? Element.Text
             if (target == null ||
                 kotlin.math.abs(target.measuredHeight - intent.height) < 0.5f
             ) state
@@ -240,6 +246,7 @@ class Reducer(
                 history = nextHistory,
                 mode = intent.mode,
                 selectedIds = nextSelected,
+                groupPath = if (intent.mode == Mode.SELECT) state.groupPath else emptyList(),
                 marqueeRect = null,
                 activePolygonId = if (intent.mode == Mode.POLYGON) activeId else null,
                 toolMemory = nextMemory,
@@ -257,29 +264,124 @@ class Reducer(
 
         // Selection
         is Intent.SelectAt -> {
-            val hit = useCase.hitTopmost(state.elements, intent.offset, intent.tolerance)
-            state.copy(selectedIds = if (hit == null) emptySet() else setOf(hit.id))
+            val resolution = state.elements.resolveTap(
+                state.groupPath,
+                intent.offset,
+                intent.tolerance,
+            )
+            val target = resolution.target
+            when {
+                target == null -> state.copy(
+                    selectedIds = emptySet(),
+                    groupPath = emptyList(),
+                )
+                resolution.insideEnteredScope -> state.copy(selectedIds = setOf(target.id))
+                else -> state.copy(
+                    selectedIds = setOf(target.id),
+                    groupPath = emptyList(),
+                )
+            }
+        }
+        is Intent.DoubleTapAt -> {
+            val path = state.elements.sanitizeGroupPath(state.groupPath)
+            val resolution = state.elements.resolveTap(path, intent.offset, intent.tolerance)
+            val target = resolution.target ?: return@reduce state
+            if (target is Element.Group) {
+                val basePath = if (resolution.insideEnteredScope) path else emptyList()
+                val nextPath = basePath + target.id
+                val nextTarget = resolution.hitPath.getOrNull(nextPath.size) ?: target
+                state.copy(groupPath = nextPath, selectedIds = setOf(nextTarget.id))
+            } else {
+                state.copy(
+                    selectedIds = setOf(target.id),
+                    groupPath = if (resolution.insideEnteredScope) path else emptyList(),
+                )
+            }
         }
         is Intent.RequestTextEditAt -> {
             // Select the tapped text so the edit target is the sole selection;
-            // the controller emits Event.TextEditRequested off this. Leave
-            // selection untouched when the topmost hit isn't a text element.
-            val hit = useCase.hitTopmost(state.elements, intent.offset, intent.tolerance)
-            if (hit is Element.Text) state.copy(selectedIds = setOf(hit.id)) else state
+            // the controller emits Event.TextEditRequested off this.
+            val resolution = state.elements.resolveTap(
+                state.groupPath,
+                intent.offset,
+                intent.tolerance,
+            )
+            val hit = resolution.target
+            if (hit is Element.Text) {
+                state.copy(selectedIds = setOf(hit.id))
+            } else {
+                state
+            }
+        }
+        is Intent.GroupSelected -> {
+            val scopeIds = state.elements
+                .childrenAt(state.groupPath)
+                .mapTo(hashSetOf()) { it.id }
+            if (state.selectedIds.count { it in scopeIds } < 2) {
+                state
+            } else {
+                val before = state.elements.allElementIds()
+                val nextElements = useCase.groupSelected(
+                    state.elements,
+                    state.groupPath,
+                    state.selectedIds,
+                )
+                val newGroupId = nextElements.flattenElements()
+                    .firstOrNull { it.id !in before }?.id
+                if (newGroupId == null) {
+                    state
+                } else {
+                    state.snapshot().copy(
+                        elements = nextElements,
+                        selectedIds = setOf(newGroupId),
+                    )
+                }
+            }
+        }
+        is Intent.UngroupSelected -> {
+            val group = state.selectedIds.singleOrNull()
+                ?.let { state.elements.findElementById(it) as? Element.Group }
+            if (group == null) {
+                state
+            } else {
+                state.snapshot().copy(
+                    elements = useCase.ungroupSelected(
+                        state.elements,
+                        state.groupPath,
+                        state.selectedIds,
+                    ),
+                    selectedIds = group.children.mapTo(hashSetOf()) { it.id },
+                )
+            }
+        }
+        is Intent.ExitGroup -> {
+            if (state.groupPath.isEmpty()) {
+                state.copy(selectedIds = emptySet())
+            } else {
+                val exitedId = state.groupPath.last()
+                state.copy(
+                    groupPath = state.groupPath.dropLast(1),
+                    selectedIds = setOf(exitedId),
+                )
+            }
         }
         is Intent.SetMarqueeRect -> state.copy(marqueeRect = intent.rect)
         is Intent.CommitMarquee -> state.copy(
-            selectedIds = useCase.selectInRect(state.elements, intent.rect),
+            selectedIds = useCase.selectInRect(state.elements, intent.rect, state.groupPath),
             marqueeRect = null,
         )
         is Intent.ClearSelection -> state.copy(selectedIds = emptySet())
         is Intent.DeleteSelected -> {
             if (state.selectedIds.isEmpty()) state
-            else state.snapshot().copy(
-                elements = useCase.deleteSelected(state.elements, state.selectedIds),
-                selectedIds = emptySet(),
-                activePolygonId = state.activePolygonId?.takeIf { it !in state.selectedIds },
-            )
+            else {
+                val nextElements = useCase.deleteSelected(state.elements, state.selectedIds)
+                state.snapshot().copy(
+                    elements = nextElements,
+                    selectedIds = emptySet(),
+                    groupPath = nextElements.sanitizeGroupPath(state.groupPath),
+                    activePolygonId = state.activePolygonId?.takeIf { it !in state.selectedIds },
+                )
+            }
         }
         is Intent.BeginTransform -> state.snapshot()
         is Intent.EndTransform -> state
@@ -426,6 +528,7 @@ class Reducer(
                 history = state.history.dropLast(1),
                 future = (state.future + listOf(state.elements)).takeLast(HISTORY_CAP),
                 selectedIds = state.selectedIds.intersect(prev.map { it.id }.toSet()),
+                groupPath = emptyList(),
                 activePolygonId = null,
             )
         }
@@ -436,6 +539,7 @@ class Reducer(
                 future = state.future.dropLast(1),
                 history = (state.history + listOf(state.elements)).takeLast(HISTORY_CAP),
                 selectedIds = state.selectedIds.intersect(next.map { it.id }.toSet()),
+                groupPath = emptyList(),
                 activePolygonId = null,
             )
         }

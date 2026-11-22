@@ -282,6 +282,29 @@ sealed class Intent {
      */
     data class RequestTextEditAt(val offset: Offset, val tolerance: Float = 8f) : Intent()
 
+    /**
+     * Double-tap in [Mode.SELECT]. Enters the hit group (selecting the direct
+     * child under the pointer) or selects a direct text child for editing.
+     * The controller emits [Event.TextEditRequested] when the resolved target
+     * is an [Element.Text] at the current scope.
+     */
+    data class DoubleTapAt(val offset: Offset, val tolerance: Float = 8f) : Intent()
+
+    /**
+     * Group the selected direct children of the current scope into a new
+     * [Element.Group]. Requires at least two selections. Snapshots history.
+     */
+    data object GroupSelected : Intent()
+
+    /** Ungroup the single selected group at the current scope. Snapshots history. */
+    data object UngroupSelected : Intent()
+
+    /**
+     * Leave the innermost entered group one level. Selects the group being
+     * exited; with no entered group, clears the selection. Not undoable.
+     */
+    data object ExitGroup : Intent()
+
     /** Replace the current marquee rectangle (or clear with null). Not undoable. */
     data class SetMarqueeRect(val rect: Rect?) : Intent()
 

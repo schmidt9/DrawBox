@@ -7,6 +7,7 @@ import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.ShapeType
 import io.ak1.drawbox.domain.model.StrokeStyle
 import io.ak1.drawbox.domain.model.bounds
+import io.ak1.drawbox.domain.model.visualAabb
 import androidx.compose.ui.geometry.Offset
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -39,15 +40,30 @@ object SvgExporter {
 
         // Sort elements by zIndex and convert each to SVG
         elements.sortedBy { it.zIndex }.forEach { element ->
-            when (element) {
-                is Element.Path -> svgElements.add(pathToSvg(element))
-                is Element.Shape -> svgElements.add(shapeToSvg(element))
-                is Element.Image -> svgElements.add(imageToSvg(element))
-                is Element.Text -> svgElements.add(textToSvg(element))
-            }
+            elementToSvg(element)?.let(svgElements::add)
         }
 
         return buildSvgDocument(svgElements, viewBoxX, viewBoxY, viewBoxWidth, viewBoxHeight)
+    }
+
+    private fun elementToSvg(element: Element): String? = when (element) {
+        is Element.Path -> pathToSvg(element)
+        is Element.Shape -> shapeToSvg(element)
+        is Element.Image -> imageToSvg(element)
+        is Element.Text -> textToSvg(element)
+        is Element.Group -> {
+            val inner = element.children
+                .sortedBy { it.zIndex }
+                .mapNotNull { elementToSvg(it) }
+                .joinToString("\n")
+            if (inner.isEmpty()) return null
+            if (element.rotation == 0f) {
+                inner
+            } else {
+                val center = element.bounds().center
+                """<g transform="rotate(${element.rotation}, ${center.x}, ${center.y})">$inner</g>"""
+            }
+        }
     }
 
     private fun calculateBounds(elements: List<Element>): Bounds {
@@ -57,42 +73,11 @@ object SvgExporter {
         var maxY = Float.MIN_VALUE
 
         elements.forEach { element ->
-            when (element) {
-                is Element.Path -> {
-                    element.samples.forEach { sample ->
-                        minX = kotlin.math.min(minX, sample.position.x)
-                        minY = kotlin.math.min(minY, sample.position.y)
-                        maxX = kotlin.math.max(maxX, sample.position.x)
-                        maxY = kotlin.math.max(maxY, sample.position.y)
-                    }
-                }
-                is Element.Shape -> {
-                    element.points.forEach { point ->
-                        minX = kotlin.math.min(minX, point.x)
-                        minY = kotlin.math.min(minY, point.y)
-                        maxX = kotlin.math.max(maxX, point.x)
-                        maxY = kotlin.math.max(maxY, point.y)
-                    }
-                }
-                is Element.Image -> {
-                    element.points.forEach { point ->
-                        minX = kotlin.math.min(minX, point.x)
-                        minY = kotlin.math.min(minY, point.y)
-                        maxX = kotlin.math.max(maxX, point.x)
-                        maxY = kotlin.math.max(maxY, point.y)
-                    }
-                }
-                is Element.Text -> {
-                    val left = element.topLeft.x
-                    val top = element.topLeft.y
-                    val right = left + element.wrapWidth
-                    val bottom = top + element.measuredHeight
-                    minX = kotlin.math.min(minX, left)
-                    minY = kotlin.math.min(minY, top)
-                    maxX = kotlin.math.max(maxX, right)
-                    maxY = kotlin.math.max(maxY, bottom)
-                }
-            }
+            val b = element.visualAabb()
+            minX = kotlin.math.min(minX, b.left)
+            minY = kotlin.math.min(minY, b.top)
+            maxX = kotlin.math.max(maxX, b.right)
+            maxY = kotlin.math.max(maxY, b.bottom)
         }
 
         return if (minX == Float.MAX_VALUE) {
