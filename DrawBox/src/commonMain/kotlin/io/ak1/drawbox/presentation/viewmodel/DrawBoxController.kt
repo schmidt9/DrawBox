@@ -513,12 +513,16 @@ class DrawBoxController(
     fun importPath(jsonString: String) {
         try {
             val payLoad = DrawingSerializer.deserialize(jsonString)
+            // Capture the current tool settings before reset(), which would
+            // otherwise replace them with State() defaults (e.g. red stroke)
+            // and silently change the user's selected color on import.
+            val current = _state.value
             reset()
             _state.value = State(
                 elements = payLoad.elements,
-                strokeColor = _state.value.strokeColor,
-                strokeWidth = _state.value.strokeWidth,
-                opacity = _state.value.opacity,
+                strokeColor = current.strokeColor,
+                strokeWidth = current.strokeWidth,
+                opacity = current.opacity,
                 bgColor = payLoad.bgColor,
             )
         } catch (e: Exception) {

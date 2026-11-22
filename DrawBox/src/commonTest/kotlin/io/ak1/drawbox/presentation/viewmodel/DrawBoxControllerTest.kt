@@ -2,9 +2,12 @@ package io.ak1.drawbox.presentation.viewmodel
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import io.ak1.drawbox.domain.model.DrawingSerializer
 import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.Intent
 import io.ak1.drawbox.domain.model.Mode
+import io.ak1.drawbox.domain.model.PayLoad
+import io.ak1.drawbox.domain.model.State
 import io.ak1.drawbox.domain.usecase.UseCase
 import io.ak1.drawbox.presentation.reducer.Reducer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -101,5 +104,29 @@ class DrawBoxControllerTest {
         job.join()
 
         assertEquals(Color.Blue, stateAtEmission)
+    }
+
+    // ===== Persistence =====
+
+    @Test
+    fun importPathPreservesCurrentStrokeSettings() {
+        val controller = DrawBoxController(
+            Reducer(UseCase()),
+            State(
+                strokeColor = Color.Black,
+                strokeWidth = 6f,
+                bgColor = Color.White,
+            ),
+        )
+        val json = DrawingSerializer.serialize(
+            PayLoad(bgColor = Color.White, elements = emptyList()),
+        )
+
+        controller.importPath(json)
+
+        val state = controller.state.value
+        assertEquals(Color.Black, state.strokeColor, "import must not reset the selected color")
+        assertEquals(6f, state.strokeWidth, "import must not reset the stroke width")
+        assertEquals(Color.White, state.bgColor)
     }
 }
