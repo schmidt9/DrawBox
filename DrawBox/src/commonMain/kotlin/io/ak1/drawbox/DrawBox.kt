@@ -84,15 +84,20 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import io.ak1.drawbox.domain.model.AlignmentGuide
+import io.ak1.drawbox.domain.model.AlignmentGuideOrientation
 import io.ak1.drawbox.domain.model.BackgroundPattern
 import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.Intent
 import io.ak1.drawbox.domain.model.Mode
+import io.ak1.drawbox.domain.model.MoveSnapState
 import io.ak1.drawbox.domain.model.ResizeHandle
 import io.ak1.drawbox.domain.model.ShapeType
 import io.ak1.drawbox.domain.model.State
 import io.ak1.drawbox.domain.model.StrokeStyle
 import io.ak1.drawbox.domain.model.Viewport
+import io.ak1.drawbox.domain.model.alignmentMovingBounds
+import io.ak1.drawbox.domain.model.alignmentTargetRects
 import io.ak1.drawbox.domain.model.angleFromCenter
 import io.ak1.drawbox.domain.model.bezierMidpoint
 import io.ak1.drawbox.domain.model.bounds
@@ -103,13 +108,20 @@ import io.ak1.drawbox.domain.model.distance
 import io.ak1.drawbox.domain.model.effectiveMode
 import io.ak1.drawbox.domain.model.findElementById
 import io.ak1.drawbox.domain.model.flattenElements
+import io.ak1.drawbox.domain.model.hasRotatedAncestor
 import io.ak1.drawbox.domain.model.pathToElement
 import io.ak1.drawbox.domain.model.pointerInElementParentFrame
 import io.ak1.drawbox.domain.model.resolveHitPath
 import io.ak1.drawbox.domain.model.resolveTap
 import io.ak1.drawbox.domain.model.resizeBoundsForElement
 import io.ak1.drawbox.domain.model.rotateAround
+import io.ak1.drawbox.domain.model.rotatedAncestorSubtreeIds
+import io.ak1.drawbox.domain.model.snapResizePointer
+import io.ak1.drawbox.domain.model.stepMoveSnap
+import io.ak1.drawbox.domain.model.subtreeIds
 import io.ak1.drawbox.domain.model.topLevelAncestorId
+import io.ak1.drawbox.domain.model.visualAabb
+import io.ak1.drawbox.domain.model.withBounds
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.absoluteValue
@@ -271,6 +283,12 @@ fun DrawBox(
     // since they don't change any element's geometry.
     var dragInProgress by remember { mutableStateOf(false) }
 
+    // Dotted alignment guides for the active move/resize drag. Interaction
+    // chrome only: never stored in State, serialized, or exported.
+    var alignmentGuides by remember {
+        mutableStateOf<List<AlignmentGuide>>(emptyList())
+    }
+
     // Snapshot of (viewport, static element refs) at the last finalizedLayer
     // record. We use REFERENCE equality on element entries — the reducer always
     // produces new instances via `copy(...)` on mutation, so any change to a
@@ -291,6 +309,12 @@ fun DrawBox(
     val handleHitPx = with(density) { 16.dp.toPx() }
     val rotationOffsetPx = with(density) { 28.dp.toPx() }
     val pickTolerancePx = with(density) { 12.dp.toPx() }
+    // Screen-space alignment snap distance. Divided by the viewport scale per
+    // drag tick so the feel stays constant at any zoom.
+    val alignmentSnapThresholdPx = with(density) { 6.dp.toPx() }
+    // Two co-linear target features within this screen distance are merged into
+    // one guide line.
+    val alignmentMergeEpsilonPx = with(density) { 0.5.dp.toPx() }
     // Screen-space metrics for the selection chrome. Kept in px here (resolved
     // once per density change) and scaled by inverseScale at draw time so the
     // box, handles, and padding stay a constant on-screen size at any zoom.
@@ -309,6 +333,7 @@ fun DrawBox(
     // re-keying (and re-allocating) the pointerInput block on every state change.
     val latestState by rememberUpdatedState(state)
     val latestOnIntent by rememberUpdatedState(onIntent)
+    val latestHiddenIds by rememberUpdatedState(hiddenElementIds)
 
     // Keyboard focus for the space-bar temp-pan. On platforms without hardware
     // keyboards (mobile) this is harmless dead weight.
@@ -616,6 +641,11 @@ fun DrawBox(
             .pointerInput(Unit) {
                 var interaction: SelectionInteraction? = null
                 var lastWorld = Offset.Zero
+                // Alignment snapping state, valid for the current gesture only.
+                var moveSnap: MoveSnapState? = null
+                var moveTargets: List<Rect> = emptyList()
+                var resizeTargets: List<Rect> = emptyList()
+                var resizeSnapEnabled = false
 
                 // Gesture callbacks are the same logic detectDragGestures used to
                 // drive; they're hoisted to local functions so the custom
@@ -625,6 +655,11 @@ fun DrawBox(
                     val s = latestState
                     val world = s.viewport.screenToWorld(screenPos)
                     lastWorld = world
+                    alignmentGuides = emptyList()
+                    moveSnap = null
+                    moveTargets = emptyList()
+                    resizeTargets = emptyList()
+                    resizeSnapEnabled = false
                     when (s.effectiveMode) {
                         Mode.PAN -> {
                             interaction = SelectionInteraction.Pan
@@ -643,10 +678,48 @@ fun DrawBox(
                                     latestOnIntent(Intent.SelectAt(world, pickTolerancePx / s.viewport.scale))
                                     latestOnIntent(Intent.BeginTransform)
                                     dragInProgress = true
+                                    val ids = setOf(classified.targetId)
+                                    s.elements.alignmentMovingBounds(ids)?.let {
+                                        moveSnap = MoveSnapState(it)
+                                    }
+                                    moveTargets = s.elements.alignmentTargetRects(
+                                        excludedSubtreeIds = s.elements.subtreeIds(ids) +
+                                            s.elements.rotatedAncestorSubtreeIds(ids),
+                                        hiddenIds = latestHiddenIds,
+                                        movingIds = ids,
+                                    )
                                     SelectionInteraction.Move
                                 }
-                                is SelectionInteraction.Move,
-                                is SelectionInteraction.Resize,
+                                is SelectionInteraction.Move -> {
+                                    latestOnIntent(Intent.BeginTransform)
+                                    dragInProgress = true
+                                    val ids = s.selectedIds
+                                    s.elements.alignmentMovingBounds(ids)?.let {
+                                        moveSnap = MoveSnapState(it)
+                                    }
+                                    moveTargets = s.elements.alignmentTargetRects(
+                                        excludedSubtreeIds = s.elements.subtreeIds(ids) +
+                                            s.elements.rotatedAncestorSubtreeIds(ids),
+                                        hiddenIds = latestHiddenIds,
+                                        movingIds = ids,
+                                    )
+                                    classified
+                                }
+                                is SelectionInteraction.Resize -> {
+                                    latestOnIntent(Intent.BeginTransform)
+                                    dragInProgress = true
+                                    resizeSnapEnabled =
+                                        !s.elements.hasRotatedAncestor(classified.elementId)
+                                    if (resizeSnapEnabled) {
+                                        val ids = setOf(classified.elementId)
+                                        resizeTargets = s.elements.alignmentTargetRects(
+                                            excludedSubtreeIds = s.elements.subtreeIds(ids),
+                                            hiddenIds = latestHiddenIds,
+                                            movingIds = ids,
+                                        )
+                                    }
+                                    classified
+                                }
                                 is SelectionInteraction.Rotate,
                                 is SelectionInteraction.LineEndpoint,
                                 is SelectionInteraction.LineBend -> {
@@ -721,6 +794,11 @@ fun DrawBox(
                     latestOnIntent(Intent.EndTransform)
                     interaction = null
                     dragInProgress = false
+                    alignmentGuides = emptyList()
+                    moveSnap = null
+                    moveTargets = emptyList()
+                    resizeTargets = emptyList()
+                    resizeSnapEnabled = false
                 }
 
                 fun onDragCancel() {
@@ -735,6 +813,11 @@ fun DrawBox(
                     latestOnIntent(Intent.EndTransform)
                     interaction = null
                     dragInProgress = false
+                    alignmentGuides = emptyList()
+                    moveSnap = null
+                    moveTargets = emptyList()
+                    resizeTargets = emptyList()
+                    resizeSnapEnabled = false
                 }
 
                 fun onDrag(change: PointerInputChange, dragAmount: Offset) {
@@ -744,8 +827,30 @@ fun DrawBox(
                         Mode.PAN -> latestOnIntent(Intent.PanBy(dragAmount))
                         Mode.SELECT -> when (val i = interaction) {
                             is SelectionInteraction.Move -> {
-                                latestOnIntent(Intent.MoveSelected(world - lastWorld))
+                                val rawDelta = world - lastWorld
                                 lastWorld = world
+                                val snap = moveSnap
+                                if (snap != null && moveTargets.isNotEmpty()) {
+                                    val step = stepMoveSnap(
+                                        state = snap,
+                                        rawDelta = rawDelta,
+                                        targets = moveTargets,
+                                        threshold = alignmentSnapThresholdPx /
+                                            s.viewport.scale,
+                                        mergeEpsilon = alignmentMergeEpsilonPx /
+                                            s.viewport.scale,
+                                    )
+                                    moveSnap = step.next
+                                    alignmentGuides = step.guides
+                                    if (step.emitDelta != Offset.Zero) {
+                                        latestOnIntent(
+                                            Intent.MoveSelected(step.emitDelta),
+                                        )
+                                    }
+                                } else {
+                                    latestOnIntent(Intent.MoveSelected(rawDelta))
+                                    alignmentGuides = emptyList()
+                                }
                             }
                             is SelectionInteraction.Resize -> {
                                 // The drawn handle floats [paddingWorld] outside the
@@ -759,8 +864,38 @@ fun DrawBox(
                                 val pointerLocal = s.elements.pointerInElementParentFrame(
                                     i.elementId, world,
                                 )
+                                val rawPointer = pointerLocal - worldOffset
+
+                                val snappedPointer: Offset
+                                if (resizeSnapEnabled && resizeTargets.isNotEmpty()) {
+                                    val direction = i.handle.outwardDir()
+                                    val aabbOf: (Offset) -> Rect = { p ->
+                                        i.originalElement.withBounds(
+                                            resizeBoundsForElement(
+                                                i.originalElement, i.handle, p,
+                                            ),
+                                        ).visualAabb()
+                                    }
+                                    val snap = snapResizePointer(
+                                        rawPointer = rawPointer,
+                                        aabbOf = aabbOf,
+                                        edgeX = direction.x.toInt(),
+                                        edgeY = direction.y.toInt(),
+                                        targets = resizeTargets,
+                                        threshold = alignmentSnapThresholdPx /
+                                            s.viewport.scale,
+                                        mergeEpsilon = alignmentMergeEpsilonPx /
+                                            s.viewport.scale,
+                                    )
+                                    snappedPointer = rawPointer +
+                                        snap.parentPointerCorrection
+                                    alignmentGuides = snap.guides
+                                } else {
+                                    snappedPointer = rawPointer
+                                    alignmentGuides = emptyList()
+                                }
                                 val newBounds = resizeBoundsForElement(
-                                    i.originalElement, i.handle, pointerLocal - worldOffset,
+                                    i.originalElement, i.handle, snappedPointer,
                                 )
                                 latestOnIntent(Intent.SetElementBounds(i.elementId, newBounds))
                             }
@@ -976,6 +1111,14 @@ fun DrawBox(
                         }
                     }
                 }
+                if (alignmentGuides.isNotEmpty()) {
+                    drawAlignmentGuides(
+                        guides = alignmentGuides,
+                        inverseScale = 1f / vp.scale,
+                        accent = chromeMetrics.accent,
+                        strokeWidthPx = chromeMetrics.strokeWidthPx,
+                    )
+                }
                 drawSelectionChrome(
                     state = state,
                     metrics = chromeMetrics,
@@ -1141,7 +1284,10 @@ private fun Mode.isDrawingMode(): Boolean =
  */
 private sealed class SelectionInteraction {
     data object Move : SelectionInteraction()
-    data object SelectAndMove : SelectionInteraction()
+    /** Pointer landed on an unselected element; [targetId] is the element that
+     * will be selected and moved. Carrying it lets the drag start capture the
+     * moving AABB before the asynchronous state update lands. */
+    data class SelectAndMove(val targetId: String) : SelectionInteraction()
     data object Pan : SelectionInteraction()
     data class Resize(
         val elementId: String,
@@ -1243,7 +1389,7 @@ private fun classifySelection(
         pointerWorld,
         pickToleranceWorld,
     ).target
-    if (any != null) return SelectionInteraction.SelectAndMove
+    if (any != null) return SelectionInteraction.SelectAndMove(any.id)
     // Empty space → marquee.
     return SelectionInteraction.Marquee(pointerWorld)
 }
@@ -1482,6 +1628,42 @@ private fun DrawScope.drawLineSelectionChrome(
     val dotRadius = metrics.handleSizePx * 0.5f * inverseScale
     listOf(start, end, mid).forEach { p ->
         drawSquareHandle(p, dotRadius, metrics.strokeWidthPx * inverseScale, metrics.accent)
+    }
+}
+
+private fun DrawScope.drawAlignmentGuides(
+    guides: List<AlignmentGuide>,
+    inverseScale: Float,
+    accent: Color,
+    strokeWidthPx: Float,
+) {
+    if (guides.isEmpty()) return
+    val dash = PathEffect.dashPathEffect(
+        floatArrayOf(4f * inverseScale, 4f * inverseScale),
+    )
+    val strokeWidth = strokeWidthPx * inverseScale
+    guides.forEach { guide ->
+        if (guide.end - guide.start <= 0f) return@forEach
+        val start: Offset
+        val end: Offset
+        when (guide.orientation) {
+            AlignmentGuideOrientation.Vertical -> {
+                start = Offset(guide.position, guide.start)
+                end = Offset(guide.position, guide.end)
+            }
+            AlignmentGuideOrientation.Horizontal -> {
+                start = Offset(guide.start, guide.position)
+                end = Offset(guide.end, guide.position)
+            }
+        }
+        drawLine(
+            color = accent.copy(alpha = 0.9f),
+            start = start,
+            end = end,
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+            pathEffect = dash,
+        )
     }
 }
 
