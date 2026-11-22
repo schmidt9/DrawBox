@@ -551,6 +551,19 @@ class DrawBoxController(
             _events.tryEmit(Event.Error("Failed to import drawing: ${e.message}"))
         }
     }
+
+    /**
+     * Replace the drawing state wholesale without reducing an intent.
+     *
+     * Used by hosts that keep multiple document pages behind one controller.
+     * This does not push an undo snapshot and does not emit an intent: the
+     * supplied state's own history/future are authoritative. Undo/redo
+     * availability is refreshed from the new state.
+     */
+    fun restoreState(state: State) {
+        _state.value = state
+        updateHistoryState()
+    }
 }
 
 /**

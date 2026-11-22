@@ -525,3 +525,90 @@ object DrawingSerializer {
         return dto.toPayLoad()
     }
 }
+
+/**
+ * One page of a multi-page drawing document: an identity/name pair plus the
+ * same background + elements payload a single-page drawing uses.
+ */
+data class PagePayLoad(
+    val id: String,
+    val name: String,
+    val bgColor: Color,
+    val elements: List<Element>,
+)
+
+/** A multi-page document plus the page the editor should open. */
+data class PagesPayLoad(
+    val activePageId: String,
+    val pages: List<PagePayLoad>,
+)
+
+@kotlinx.serialization.Serializable
+data class SerializablePage(
+    val id: String,
+    val name: String,
+    val bgColor: String,
+    val elements: List<SerializableElement>,
+)
+
+@kotlinx.serialization.Serializable
+data class SerializablePagesDrawing(
+    // No default: kotlinx-serialization omits defaulted fields, so an explicit
+    // argument is what keeps "version" on the wire without enabling
+    // encodeDefaults (which would also emit every null optional element field).
+    val version: Int,
+    val activePageId: String,
+    val pages: List<SerializablePage>,
+)
+
+private fun PagePayLoad.toSerializablePage(): SerializablePage = SerializablePage(
+    id = id,
+    name = name,
+    bgColor = bgColor.toHexString(),
+    elements = elements.map { it.toDto().toSerializableElement() },
+)
+
+private fun SerializablePage.toPagePayLoad(): PagePayLoad = PagePayLoad(
+    id = id,
+    name = name,
+    bgColor = bgColor.toColor(),
+    elements = elements.map { it.toElementDto().toElement() },
+)
+
+/**
+ * JSON codec for multi-page documents. Reuses the element wire format of
+ * [DrawingSerializer]; old single-page JSON is intentionally not supported and
+ * fails to deserialize (the missing `version`/`activePageId`/`pages` fields are
+ * required).
+ */
+object PagesDrawingSerializer {
+    /** Current document format version written as `version`. */
+    const val FORMAT_VERSION: Int = 2
+
+    private val json = Json {
+        prettyPrint = true
+        // Tolerate additive fields from newer writers; missing required
+        // fields still fail.
+        ignoreUnknownKeys = true
+    }
+
+    fun serialize(payLoad: PagesPayLoad): String {
+        val drawing = SerializablePagesDrawing(
+            version = FORMAT_VERSION,
+            activePageId = payLoad.activePageId,
+            pages = payLoad.pages.map { it.toSerializablePage() },
+        )
+        return json.encodeToString(SerializablePagesDrawing.serializer(), drawing)
+    }
+
+    fun deserialize(jsonString: String): PagesPayLoad {
+        val drawing = json.decodeFromString(
+            SerializablePagesDrawing.serializer(),
+            jsonString,
+        )
+        return PagesPayLoad(
+            activePageId = drawing.activePageId,
+            pages = drawing.pages.map { it.toPagePayLoad() },
+        )
+    }
+}
