@@ -129,4 +129,25 @@ class DrawBoxControllerTest {
         assertEquals(6f, state.strokeWidth, "import must not reset the stroke width")
         assertEquals(Color.White, state.bgColor)
     }
+
+    @Test
+    fun restoreStateReplacesWholeStateAndRefreshesHistoryFlags() {
+        val controller = newController()
+        assertFalse(controller.canUndo.value)
+        assertFalse(controller.canRedo.value)
+
+        val restored = State(
+            elements = emptyList(),
+            history = listOf(emptyList()),
+            future = listOf(emptyList()),
+            mode = Mode.SELECT,
+            bgColor = Color.White,
+        )
+
+        controller.restoreState(restored)
+
+        assertEquals(restored, controller.state.value)
+        assertTrue(controller.canUndo.value)
+        assertTrue(controller.canRedo.value)
+    }
 }
