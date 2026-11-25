@@ -43,7 +43,15 @@ object SvgExporter {
             elementToSvg(element)?.let(svgElements::add)
         }
 
-        return buildSvgDocument(svgElements, viewBoxX, viewBoxY, viewBoxWidth, viewBoxHeight)
+        val gradientDefs = collectGradientDefs(elements)
+        return buildSvgDocument(
+            svgElements,
+            viewBoxX,
+            viewBoxY,
+            viewBoxWidth,
+            viewBoxHeight,
+            gradientDefs,
+        )
     }
 
     private fun elementToSvg(element: Element): String? = when (element) {
@@ -92,14 +100,55 @@ object SvgExporter {
         x: Float,
         y: Float,
         width: Float,
-        height: Float
+        height: Float,
+        gradientDefs: List<String> = emptyList(),
     ): String {
         val content = elements.joinToString("\n  ")
+        val defs = if (gradientDefs.isEmpty()) {
+            ""
+        } else {
+            "\n  <defs>\n    ${gradientDefs.joinToString("\n    ")}\n  </defs>"
+        }
         return """<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="$x $y $width $height">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="$x $y $width $height">$defs
   $content
 </svg>"""
     }
+
+    /**
+     * Emit one `<linearGradient>` per gradient-filled shape, in
+     * `userSpaceOnUse` coordinates matching the renderer's world-space brush.
+     * Existing drawings (no gradients) produce no defs, keeping older exports
+     * byte-identical.
+     */
+    private fun collectGradientDefs(elements: List<Element>): List<String> = buildList {
+        fun visit(element: Element) {
+            when (element) {
+                is Element.Shape -> {
+                    val gradient = element.fillGradient
+                    if (gradient != null && gradient.stops.isNotEmpty()) {
+                        val stops = gradient.stops
+                            .sortedBy { it.offset }
+                            .joinToString("") { stop ->
+                                val alpha = stop.color.alpha.coerceIn(0f, 1f)
+                                """<stop offset="${stop.offset}" stop-color="${colorToHex(stop.color)}" stop-opacity="$alpha"/>"""
+                            }
+                        add(
+                            """<linearGradient id="${gradientId(element)}" gradientUnits="userSpaceOnUse" """ +
+                                """x1="${gradient.start.x}" y1="${gradient.start.y}" """ +
+                                """x2="${gradient.end.x}" y2="${gradient.end.y}">$stops</linearGradient>""",
+                        )
+                    }
+                }
+                is Element.Group -> element.children.forEach(::visit)
+                else -> Unit
+            }
+        }
+        elements.forEach(::visit)
+    }
+
+    private fun gradientId(shape: Element.Shape): String =
+        "grad-" + shape.id.replace(Regex("[^A-Za-z0-9_-]"), "-")
 
     private fun pathToSvg(path: Element.Path): String {
         if (path.samples.isEmpty()) return ""
@@ -168,8 +217,12 @@ object SvgExporter {
         val strokeOn = shape.strokeEnabled && shape.strokeWidth > 0f
         val color = if (strokeOn) colorToHex(shape.strokeColor) else "none"
         val strokeWidth = if (strokeOn) shape.strokeWidth else 0f
-        val fillColor = if (shape.fillColor != null) colorToHex(shape.fillColor) else "none"
-        val fillAttr = if (shape.fillColor != null) """fill="$fillColor"""" else """fill="none""""
+        val fillPaint = when {
+            shape.fillGradient?.stops?.isNotEmpty() == true -> "url(#${gradientId(shape)})"
+            shape.fillColor != null -> colorToHex(shape.fillColor)
+            else -> null
+        }
+        val fillAttr = if (fillPaint != null) """fill="$fillPaint"""" else """fill="none""""
         val dashAttr = strokeDashArrayAttr(shape.strokeStyle, shape.strokeWidth)
 
         val inner = when (shape.shapeType) {

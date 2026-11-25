@@ -9,6 +9,35 @@ import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
 /**
+ * One color stop of a [ShapeGradient].
+ *
+ * @property offset Position along the gradient axis, 0..1.
+ * @property color Stop color; its alpha participates in the gradient.
+ */
+data class GradientStop(
+    val offset: Float,
+    val color: Color,
+)
+
+/**
+ * Linear gradient fill for an [Element.Shape].
+ *
+ * Endpoints are stored in the shape's unrotated world coordinate frame, like
+ * [Element.Shape.points]; element rotation is applied as a render-time
+ * transform and carries the gradient with it. When present this overrides
+ * [Element.Shape.fillColor]; the stroke is unaffected.
+ */
+data class ShapeGradient(
+    val start: Offset,
+    val end: Offset,
+    val stops: List<GradientStop>,
+)
+
+/** True when the shape paints a fill, solid or gradient. */
+val Element.Shape.hasFill: Boolean
+    get() = fillColor != null || fillGradient != null
+
+/**
  * Base sealed class for all drawable elements on the canvas.
  *
  * The [Element] type system allows the renderer to handle different drawing
@@ -294,6 +323,12 @@ sealed class Element {
         val endBinding: String? = null,
         override val createdAt: Long = 0L,
         override val modifiedAt: Long = 0L,
+        /**
+         * Optional linear gradient fill in the shape's unrotated world frame.
+         * When non-null it overrides [fillColor]; the stroke is unaffected.
+         * Ignored by [ShapeType.LINE] and [ShapeType.ARROW].
+         */
+        val fillGradient: ShapeGradient? = null,
     ) : Element()
 
     /**

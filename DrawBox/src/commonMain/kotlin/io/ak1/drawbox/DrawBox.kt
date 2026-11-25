@@ -52,6 +52,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -63,6 +64,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TileMode
@@ -2097,17 +2099,17 @@ private fun DrawScope.drawShape(shape: Element.Shape) {
         minOf(start.x, end.x),
         minOf(start.y, end.y)
     )
-    val hasFill = shape.fillColor != null
     val hasStroke = shape.strokeEnabled && shape.strokeWidth > 0f
+    val fillBrush = shape.fillBrush()
 
     when (shape.shapeType) {
         ShapeType.RECTANGLE -> {
             val r = shape.cornerRadius.coerceAtMost(minOf(width, height) * 0.5f)
             val size = Size(width, height)
-            if (hasFill) {
+            if (fillBrush != null) {
                 if (r > 0f) {
                     drawRoundRect(
-                        color = shape.fillColor,
+                        brush = fillBrush,
                         topLeft = topLeft,
                         size = size,
                         cornerRadius = CornerRadius(r, r),
@@ -2115,7 +2117,7 @@ private fun DrawScope.drawShape(shape: Element.Shape) {
                     )
                 } else {
                     drawRect(
-                        color = shape.fillColor,
+                        brush = fillBrush,
                         topLeft = topLeft,
                         size = size,
                         style = Fill,
@@ -2148,9 +2150,9 @@ private fun DrawScope.drawShape(shape: Element.Shape) {
             )
             val distance = sqrt((end.x - start.x) * (end.x - start.x) + (end.y - start.y) * (end.y - start.y))
             val radius = distance / 2
-            if (hasFill) {
+            if (fillBrush != null) {
                 drawCircle(
-                    color = shape.fillColor,
+                    brush = fillBrush,
                     radius = radius,
                     center = center,
                     style = Fill,
@@ -2179,8 +2181,8 @@ private fun DrawScope.drawShape(shape: Element.Shape) {
                 }
                 if (shape.points.size >= 3) close()
             }
-            if (hasFill && shape.points.size >= 3) {
-                drawPath(path, color = shape.fillColor, style = Fill)
+            if (fillBrush != null && shape.points.size >= 3) {
+                drawPath(path, brush = fillBrush, style = Fill)
             }
             if (hasStroke) {
                 drawPath(path, color = shape.strokeColor, style = shape.strokeDrawStyle())
@@ -2451,12 +2453,38 @@ private fun DrawScope.drawTriangle(
             close()
         }
     }
-    if (shape.fillColor != null) {
-        drawPath(path, color = shape.fillColor, style = Fill)
+    val fillBrush = shape.fillBrush()
+    if (fillBrush != null) {
+        drawPath(path, brush = fillBrush, style = Fill)
     }
     if (shape.strokeEnabled && shape.strokeWidth > 0f) {
         drawPath(path, color = shape.strokeColor, style = shape.strokeDrawStyle())
     }
+}
+
+/**
+ * Resolve a shape's fill paint: a linear-gradient brush when
+ * [Element.Shape.fillGradient] is present (and valid), otherwise a solid color
+ * brush for [Element.Shape.fillColor], otherwise null.
+ */
+private fun Element.Shape.fillBrush(): Brush? {
+    val gradient = fillGradient
+    if (gradient != null) {
+        val stops = gradient.stops.sortedBy { it.offset }
+        if (stops.isNotEmpty()) {
+            return if (stops.size == 1) {
+                SolidColor(stops.first().color)
+            } else {
+                Brush.linearGradient(
+                    *stops.map { it.offset to it.color }.toTypedArray(),
+                    start = gradient.start,
+                    end = gradient.end,
+                    tileMode = TileMode.Clamp,
+                )
+            }
+        }
+    }
+    return fillColor?.let { SolidColor(it) }
 }
 
 /**

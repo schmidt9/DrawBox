@@ -115,6 +115,34 @@ fun String?.toStrokeStyle(): StrokeStyle = when (this) {
     else -> StrokeStyle.SOLID
 }
 
+private fun ShapeGradient.toGradientDto(): ShapeGradientDto = ShapeGradientDto(
+    start = start.toJsonString(),
+    end = end.toJsonString(),
+    stops = stops.map { GradientStopDto(offset = it.offset, color = it.color.toHexString()) },
+)
+
+private fun ShapeGradientDto.toShapeGradient(): ShapeGradient = ShapeGradient(
+    start = start.toOffset(),
+    end = end.toOffset(),
+    stops = stops.map { GradientStop(offset = it.offset, color = it.color.toColor()) },
+)
+
+@kotlinx.serialization.Serializable
+data class GradientStopDto(
+    val offset: Float,
+    /** Stop color as 8-digit `#RRGGBBAA`. */
+    val color: String,
+)
+
+@kotlinx.serialization.Serializable
+data class ShapeGradientDto(
+    /** Gradient start, encoded as "x,y". */
+    val start: String,
+    /** Gradient end, encoded as "x,y". */
+    val end: String,
+    val stops: List<GradientStopDto>,
+)
+
 data class ElementDto(
     val id: String,
     val type: String,
@@ -130,6 +158,8 @@ data class ElementDto(
     val alpha: Float? = null,
     val shapeType: String? = null,
     val fillColor: String? = null,
+    /** Optional linear gradient fill; overrides [fillColor] when present. */
+    val fillGradient: ShapeGradientDto? = null,
     val rotation: Float? = null,
     val cornerRadius: Float? = null,
     val strokeStyle: String? = null,
@@ -250,6 +280,7 @@ fun Element.toDto(): ElementDto = when (this) {
         strokeColor = strokeColor.toHexString(),
         strokeWidth = strokeWidth,
         fillColor = fillColor?.toHexString(),
+        fillGradient = fillGradient?.toGradientDto(),
         rotation = rotation.takeIf { it != 0f },
         cornerRadius = cornerRadius.takeIf { it != 0f },
         strokeStyle = strokeStyle.toWireString().takeIf { strokeStyle != StrokeStyle.SOLID },
@@ -348,6 +379,7 @@ fun ElementDto.toElement(): Element = when (type) {
         points = points.map { it.toOffset() },
         strokeColor = strokeColor.toColor(),
         fillColor = fillColor?.toColor(),
+        fillGradient = fillGradient?.toShapeGradient(),
         strokeEnabled = strokeEnabled ?: true,
         strokeWidth = strokeWidth,
         zIndex = zIndex,
@@ -409,6 +441,8 @@ data class SerializableElement(
     val alpha: Float? = null,
     val shapeType: String? = null,
     val fillColor: String? = null,
+    /** Optional linear gradient fill; overrides [fillColor] when present. */
+    val fillGradient: ShapeGradientDto? = null,
     val rotation: Float? = null,
     val cornerRadius: Float? = null,
     val strokeStyle: String? = null,
@@ -448,6 +482,7 @@ private fun ElementDto.toSerializableElement(): SerializableElement = Serializab
     alpha = alpha,
     shapeType = shapeType,
     fillColor = fillColor,
+    fillGradient = fillGradient,
     rotation = rotation,
     cornerRadius = cornerRadius,
     strokeStyle = strokeStyle,
@@ -481,6 +516,7 @@ private fun SerializableElement.toElementDto(): ElementDto = ElementDto(
     alpha = alpha,
     shapeType = shapeType,
     fillColor = fillColor,
+    fillGradient = fillGradient,
     rotation = rotation,
     cornerRadius = cornerRadius,
     strokeStyle = strokeStyle,
