@@ -369,7 +369,7 @@ private fun hitTestShape(
     val end = shape.points.last()
     return when (shape.shapeType) {
         ShapeType.RECTANGLE -> {
-            if (shape.fillColor != null) {
+            if (shape.hasFill) {
                 bounds.inflate(hitRadius).contains(p)
             } else {
                 val outer = bounds.inflate(hitRadius)
@@ -384,7 +384,7 @@ private fun hitTestShape(
             )
             val radius = distance(start, end) * 0.5f
             val d = distance(p, center)
-            if (shape.fillColor != null) {
+            if (shape.hasFill) {
                 d <= radius + hitRadius
             } else {
                 abs(d - radius) <= hitRadius
@@ -397,7 +397,7 @@ private fun hitTestShape(
             val apex = Offset(tl.x + w * 0.5f, tl.y)
             val br = Offset(tl.x + w, tl.y + h)
             val bl = Offset(tl.x, tl.y + h)
-            if (shape.fillColor != null) {
+            if (shape.hasFill) {
                 pointInTriangle(p, apex, br, bl)
             } else {
                 distanceToSegment(p, apex, br) <= hitRadius ||
@@ -419,7 +419,7 @@ private fun hitTestShape(
                 vertices.isEmpty() -> false
                 vertices.size == 1 -> distance(vertices[0], p) <= hitRadius
                 vertices.size == 2 -> distanceToSegment(p, vertices[0], vertices[1]) <= hitRadius
-                shape.fillColor != null -> {
+                shape.hasFill -> {
                     pointInPolygon(p, vertices) ||
                         polygonEdges(vertices).any { (a, b) ->
                             distanceToSegment(p, a, b) <= hitRadius
@@ -486,7 +486,10 @@ fun Element.translate(delta: Offset): Element = when (this) {
     is Element.Path -> copy(
         samples = samples.map { it.copy(position = it.position + delta) },
     ).touched()
-    is Element.Shape -> copy(points = points.map { it + delta }).touched()
+    is Element.Shape -> copy(
+        points = points.map { it + delta },
+        fillGradient = fillGradient?.translated(delta),
+    ).touched()
     is Element.Image -> copy(points = points.map { it + delta }).touched()
     is Element.Text -> copy(topLeft = topLeft + delta).touched()
     is Element.Group -> copy(children = children.map { it.translate(delta) }).touched()
@@ -535,26 +538,29 @@ fun Element.withBounds(newBounds: Rect): Element {
             topLeft = safeBounds.topLeft,
             wrapWidth = safeBounds.width,
         ).touched()
-        is Element.Shape -> when (shapeType) {
-            ShapeType.CIRCLE -> resizeCircle(this, safeBounds).touched()
-            ShapeType.POLYGON -> {
-                val mapped = scalePoints(points, bounds(), safeBounds)
-                copy(points = mapped).touched()
-            }
-            else -> {
-                if (points.size < 2) {
-                    copy(points = listOf(safeBounds.topLeft, safeBounds.bottomRight)).touched()
-                } else {
-                    val old = bounds()
-                    val start = points[0]
-                    val end = points.last()
-                    // Map (start, end) into the new bbox, preserving which corner
-                    // each point originally landed on.
-                    val newStart = mapCorner(start, old, safeBounds)
-                    val newEnd = mapCorner(end, old, safeBounds)
-                    copy(points = listOf(newStart, newEnd)).touched()
+        is Element.Shape -> {
+            val old = bounds()
+            val resized = when (shapeType) {
+                ShapeType.CIRCLE -> resizeCircle(this, safeBounds)
+                ShapeType.POLYGON -> copy(points = scalePoints(points, old, safeBounds))
+                else -> {
+                    if (points.size < 2) {
+                        copy(points = listOf(safeBounds.topLeft, safeBounds.bottomRight))
+                    } else {
+                        // Map (start, end) into the new bbox, preserving which corner
+                        // each point originally landed on.
+                        copy(
+                            points = listOf(
+                                mapCorner(points[0], old, safeBounds),
+                                mapCorner(points.last(), old, safeBounds),
+                            ),
+                        )
+                    }
                 }
             }
+            resized.copy(
+                fillGradient = fillGradient?.mapped(old, safeBounds),
+            ).touched()
         }
     }
 }
@@ -592,6 +598,17 @@ private fun scalePoints(points: List<Offset>, from: Rect, to: Rect): List<Offset
     if (points.isEmpty()) return points
     return points.map { mapCorner(it, from, to) }
 }
+
+/** Shift gradient endpoints with the shape's points. */
+private fun ShapeGradient.translated(delta: Offset): ShapeGradient =
+    copy(start = start + delta, end = end + delta)
+
+/** Map gradient endpoints through the same normalized bounds map as the points. */
+private fun ShapeGradient.mapped(from: Rect, to: Rect): ShapeGradient =
+    copy(
+        start = mapCorner(start, from, to),
+        end = mapCorner(end, from, to),
+    )
 
 /** Absolute rotation in degrees. */
 fun Element.withRotation(degrees: Float): Element = when (this) {

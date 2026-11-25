@@ -633,7 +633,7 @@ class UseCase {
         color: Color?,
     ): List<Element> = applyStyleToSelection(elements, ids) { el ->
         when (el) {
-            is Element.Shape -> el.copy(fillColor = color).touched()
+            is Element.Shape -> el.copy(fillColor = color, fillGradient = null).touched()
             is Element.Path -> el
             is Element.Image -> el
             is Element.Text -> el
