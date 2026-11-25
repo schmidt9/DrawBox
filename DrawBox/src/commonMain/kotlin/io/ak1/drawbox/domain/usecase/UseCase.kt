@@ -12,20 +12,26 @@ import io.ak1.drawbox.domain.model.TextAlignment
 import io.ak1.drawbox.domain.model.bakedIntoParent
 import io.ak1.drawbox.domain.model.bounds
 import io.ak1.drawbox.domain.model.childrenAt
+import io.ak1.drawbox.domain.model.clearDescendantLayerIds
 import io.ak1.drawbox.domain.model.connectorAnchor
+import io.ak1.drawbox.domain.model.copyElementLayerId
 import io.ak1.drawbox.domain.model.elementParentFrameVector
 import io.ak1.drawbox.domain.model.elementWorldAabb
 import io.ak1.drawbox.domain.model.findElementById
+import io.ak1.drawbox.domain.model.flattenElements
 import io.ak1.drawbox.domain.model.hitTest
 import io.ak1.drawbox.domain.model.mapElementById
 import io.ak1.drawbox.domain.model.removeElementsByIds
 import io.ak1.drawbox.domain.model.replaceScopeChildren
 import io.ak1.drawbox.domain.model.resizeBounds
+import io.ak1.drawbox.domain.model.topLevelAncestorId
 import io.ak1.drawbox.domain.model.topmostHit
 import io.ak1.drawbox.domain.model.touched
 import io.ak1.drawbox.domain.model.translate
+import io.ak1.drawbox.domain.model.uniqueElementName
 import io.ak1.drawbox.domain.model.visualAabb
 import io.ak1.drawbox.domain.model.withBounds
+import io.ak1.drawbox.domain.model.withFreshNames
 import io.ak1.drawbox.domain.model.withRotation
 import io.ak1.drawbox.domain.model.withZIndex
 import kotlin.math.sqrt
@@ -42,15 +48,25 @@ data class DuplicateResult(
 class UseCase {
     // Element operations
     fun addElement(element: Element, currentElements: List<Element>): List<Element> {
-        val newElement = when (element) {
-            is Element.Path -> element.copy(zIndex = currentElements.size)
-            is Element.Shape -> element.copy(zIndex = currentElements.size)
-            is Element.Image -> element.copy(zIndex = currentElements.size)
-            is Element.Text -> element.copy(zIndex = currentElements.size)
-            is Element.Group -> element.copy(zIndex = currentElements.size)
+        val named = element
+            .withFreshNames(currentElements.usedElementNames())
+            .let { listOf(it).clearDescendantLayerIds().single() }
+        val newElement = when (named) {
+            is Element.Path -> named.copy(zIndex = currentElements.size)
+            is Element.Shape -> named.copy(zIndex = currentElements.size)
+            is Element.Image -> named.copy(zIndex = currentElements.size)
+            is Element.Text -> named.copy(zIndex = currentElements.size)
+            is Element.Group -> named.copy(zIndex = currentElements.size)
         }
         return currentElements + newElement
     }
+
+    /** Lowercase names of every element (nested included) in this listing. */
+    private fun List<Element>.usedElementNames(): MutableSet<String> =
+        flatMap { listOf(it).flattenElements() }
+            .mapNotNullTo(mutableSetOf()) {
+                it.name.takeIf(String::isNotBlank)?.lowercase()
+            }
 
     fun updateElement(element: Element, currentElements: List<Element>): List<Element> {
         return currentElements.mapElementById(element.id) { element }
@@ -435,12 +451,22 @@ class UseCase {
         val selectedIds = selected.mapTo(hashSetOf()) { it.id }
         val ordered = scope.sortedBy { it.zIndex }
         val topmostIndex = ordered.indexOfLast { it.id in selectedIds }
+        // A new top-level group inherits a layer only when every selected
+        // sibling already shares the same one; mixed selections stay free.
+        val inheritedLayerId = if (groupPath.isEmpty()) {
+            selected.map { it.layerId }.distinct().singleOrNull()
+        } else {
+            null
+        }
+        val groupName = uniqueElementName("Group", elements.usedElementNames())
         val group = Element.Group(
             children = selected.mapIndexed { index, child ->
-                child.withZIndex(index).touched(now)
+                child.copyElementLayerId(null).withZIndex(index).touched(now)
             },
             createdAt = now,
             modifiedAt = now,
+            name = groupName,
+            layerId = inheritedLayerId,
         )
         val rebuilt = buildList {
             ordered.forEachIndexed { index, element ->
@@ -467,7 +493,11 @@ class UseCase {
         val group = scope.firstOrNull { it.id == ids.first() } as? Element.Group ?: return elements
 
         val pivot = group.bounds().center
-        val baked = group.children.map { it.bakedIntoParent(pivot, group.rotation) }
+        val baked = group.children.map { it.bakedIntoParent(pivot, group.rotation).let { child ->
+            // Top-level ungrouped children take over the group's layer; nested
+            // ones stay unattached because only top-level membership is honored.
+            if (groupPath.isEmpty()) child.copyElementLayerId(group.layerId) else child
+        } }
         val ordered = scope.sortedBy { it.zIndex }
         val rebuilt = buildList {
             ordered.forEach { element ->
@@ -539,8 +569,16 @@ class UseCase {
             DUPLICATE_OFFSET_WORLD,
         )
         val maxZ = scope.maxOfOrNull { it.zIndex } ?: -1
+        val usedNames = elements.usedElementNames()
         val clones = selected
             .map { clone(it).translate(offset) }
+            .map { cloned ->
+                // Duplicates are new elements: give them fresh unique names.
+                // A duplicate inserted inside an entered group is nested, so it
+                // cannot carry layer membership; top-level duplicates keep it.
+                val topLevel = if (groupPath.isEmpty()) cloned else cloned.copyElementLayerId(null)
+                listOf(topLevel).clearDescendantLayerIds().single().withFreshNames(usedNames)
+            }
             .mapIndexed { index, element -> element.withZIndex(maxZ + 1 + index) }
         val rebuiltScope = propagateBindings(scope + clones)
 
@@ -561,11 +599,40 @@ class UseCase {
         elements: List<Element>,
         point: Offset,
         radius: Float,
+        excludedTopLevelIds: Set<String> = emptySet(),
     ): List<Element> {
         if (elements.isEmpty()) return elements
-        val survivors = elements.filterNot { it.hitTest(point, radius) }
+        val survivors = elements.filterNot { element ->
+            element.id !in excludedTopLevelIds && element.hitTest(point, radius)
+        }
         return if (survivors.size == elements.size) elements else survivors
     }
+
+    /**
+     * Attach [ids] to [layerId] (or detach when null). Selection may point at a
+     * nested child; membership is recorded on the top-level ancestor because
+     * only top-level elements honor it.
+     */
+    fun assignLayer(
+        elements: List<Element>,
+        ids: Set<String>,
+        layerId: String?,
+    ): List<Element> {
+        if (ids.isEmpty()) return elements
+        val roots = ids.mapNotNullTo(hashSetOf()) { elements.topLevelAncestorId(it) }
+        if (roots.isEmpty()) return elements
+        return elements.map { element ->
+            if (element.id in roots && element.layerId != layerId) {
+                element.copyElementLayerId(layerId).touched()
+            } else {
+                element
+            }
+        }
+    }
+
+    /** Remove every top-level element attached to [layerId]. */
+    fun deleteLayerElements(elements: List<Element>, layerId: String): List<Element> =
+        elements.filterNot { it.layerId == layerId }
 
     /** Promote selected elements to the top of the z-order. */
     fun bringToFront(elements: List<Element>, ids: Set<String>): List<Element> {

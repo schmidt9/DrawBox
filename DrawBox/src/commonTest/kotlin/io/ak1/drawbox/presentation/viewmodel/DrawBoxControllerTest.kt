@@ -8,6 +8,7 @@ import io.ak1.drawbox.domain.model.Intent
 import io.ak1.drawbox.domain.model.Mode
 import io.ak1.drawbox.domain.model.PayLoad
 import io.ak1.drawbox.domain.model.State
+import io.ak1.drawbox.domain.model.StateSnapshot
 import io.ak1.drawbox.domain.usecase.UseCase
 import io.ak1.drawbox.presentation.reducer.Reducer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -138,8 +139,8 @@ class DrawBoxControllerTest {
 
         val restored = State(
             elements = emptyList(),
-            history = listOf(emptyList()),
-            future = listOf(emptyList()),
+            history = listOf(StateSnapshot()),
+            future = listOf(StateSnapshot()),
             mode = Mode.SELECT,
             bgColor = Color.White,
         )

@@ -34,6 +34,32 @@ sealed class Intent {
     /** Delete an element from the canvas */
     data class DeleteElement(val elementId: String) : Intent()
 
+    // ==================== Layer Operations ====================
+
+    /** Create a layer at the end of the creation-ordered list. */
+    data class AddLayer(val id: String, val name: String) : Intent()
+
+    /** Rename a layer; the reducer rejects blank or duplicate names. */
+    data class RenameLayer(val id: String, val name: String) : Intent()
+
+    /** Delete a layer and every top-level element attached to it. */
+    data class DeleteLayer(val id: String) : Intent()
+
+    /** Show or hide every element attached to a layer. */
+    data class SetLayerVisible(val id: String, val visible: Boolean) : Intent()
+
+    /** Lock or unlock every element attached to a layer. */
+    data class SetLayerLocked(val id: String, val locked: Boolean) : Intent()
+
+    /**
+     * Attach top-level elements (promoted to their top-level ancestors) to
+     * [layerId], or detach them when it is null.
+     */
+    data class SetElementsLayer(
+        val elementIds: Set<String>,
+        val layerId: String?,
+    ) : Intent()
+
     // ==================== Path Operations ====================
 
     /**

@@ -49,7 +49,7 @@ class PagesSerializationTest {
         assertEquals("#ff0000ff", loaded.pages[1].bgColor.toHexString())
         assertEquals(listOf("a"), loaded.pages[0].elements.map { it.id })
         assertEquals(listOf("b", "c"), loaded.pages[1].elements.map { it.id })
-        assertTrue(json.contains("\"version\": 2"))
+        assertTrue(json.contains("\"version\": 3"))
     }
 
     @Test

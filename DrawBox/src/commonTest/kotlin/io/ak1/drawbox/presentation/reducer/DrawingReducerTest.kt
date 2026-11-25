@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.Color
 import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.Intent
 import io.ak1.drawbox.domain.model.State
+import io.ak1.drawbox.domain.model.StateSnapshot
 import io.ak1.drawbox.domain.model.ShapeType
 import io.ak1.drawbox.domain.usecase.UseCase
 import kotlin.test.Test
@@ -68,7 +69,7 @@ class DrawingReducerTest {
         val path = createTestPath()
         val initialState = State(
             elements = listOf(path),
-            history = listOf(emptyList()),
+            history = listOf(StateSnapshot()),
         )
         val intent = Intent.Undo
 
@@ -82,7 +83,7 @@ class DrawingReducerTest {
     @Test
     fun testRedoIntent() {
         val path = createTestPath()
-        val initialState = State(future = listOf(listOf(path)))
+        val initialState = State(future = listOf(StateSnapshot(elements = listOf(path))))
         val intent = Intent.Redo
 
         val newState = reducer.reduce(initialState, intent)
@@ -97,8 +98,8 @@ class DrawingReducerTest {
         val path = createTestPath()
         val initialState = State(
             elements = listOf(path),
-            history = listOf(emptyList()),
-            future = listOf(listOf(path)),
+            history = listOf(StateSnapshot()),
+            future = listOf(StateSnapshot(elements = listOf(path))),
         )
         val intent = Intent.Reset
 
@@ -166,7 +167,7 @@ class DrawingReducerTest {
         val undoPath = createTestPath().copy(id = "undo")
         val initialState = State(
             elements = listOf(path),
-            future = listOf(listOf(undoPath)),
+            future = listOf(StateSnapshot(elements = listOf(undoPath))),
         )
         val newPath = createTestPath().copy(id = "new")
         val intent = Intent.AddElement(newPath)
