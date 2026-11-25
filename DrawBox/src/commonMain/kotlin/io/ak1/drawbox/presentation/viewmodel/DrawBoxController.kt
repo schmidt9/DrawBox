@@ -27,7 +27,9 @@ import androidx.compose.ui.text.TextMeasurer
 import io.ak1.drawbox.domain.model.BackgroundPattern
 import io.ak1.drawbox.domain.model.PayLoad
 import io.ak1.drawbox.domain.model.DrawingSerializer
+import io.ak1.drawbox.domain.model.hittableElements
 import io.ak1.drawbox.domain.model.resolveTap
+import io.ak1.drawbox.domain.model.visibleElements
 
 /**
  * ViewModel orchestrating drawing state and side effects.
@@ -176,19 +178,19 @@ class DrawBoxController(
             is Intent.LoadDrawing -> emitLoadEvent()
             // Double-tap in SELECT mode: open the editor for the hit text.
             is Intent.RequestTextEditAt ->
-                prev.elements.resolveTap(prev.groupPath, intent.offset, intent.tolerance)
+                prev.hittableElements().resolveTap(prev.groupPath, intent.offset, intent.tolerance)
                     .target
                     .let { it as? Element.Text }
                     ?.let { _events.tryEmit(Event.TextEditRequested(it.id)) }
             is Intent.DoubleTapAt ->
-                prev.elements.resolveTap(prev.groupPath, intent.offset, intent.tolerance)
+                prev.hittableElements().resolveTap(prev.groupPath, intent.offset, intent.tolerance)
                     .target
                     .let { it as? Element.Text }
                     ?.let { _events.tryEmit(Event.TextEditRequested(it.id)) }
             // Second tap on an already-sole-selected text opens the editor too
             // (tldraw/Figma pattern). `prev` is the pre-reduce selection.
             is Intent.SelectAt -> {
-                val hit = prev.elements
+                val hit = prev.hittableElements()
                     .resolveTap(prev.groupPath, intent.offset, intent.tolerance)
                     .target
                 if (hit is Element.Text && prev.selectedIds == setOf(hit.id)) {
@@ -435,6 +437,24 @@ class DrawBoxController(
     /** Send selected elements to the bottom of the z-order. */
     fun sendSelectionToBack() = onIntent(Intent.SendSelectionToBack)
 
+    // ==================== Layer Methods ====================
+
+    fun addLayer(id: String, name: String) = onIntent(Intent.AddLayer(id, name))
+
+    fun renameLayer(id: String, name: String) = onIntent(Intent.RenameLayer(id, name))
+
+    fun deleteLayer(id: String) = onIntent(Intent.DeleteLayer(id))
+
+    fun setLayerVisible(id: String, visible: Boolean) =
+        onIntent(Intent.SetLayerVisible(id, visible))
+
+    fun setLayerLocked(id: String, locked: Boolean) =
+        onIntent(Intent.SetLayerLocked(id, locked))
+
+    /** Attach [elementIds] to [layerId], or detach them when it is null. */
+    fun setElementsLayer(elementIds: Set<String>, layerId: String?) =
+        onIntent(Intent.SetElementsLayer(elementIds, layerId))
+
     // ==================== Camera / Viewport Methods ====================
 
     /** Translate the camera by [delta] screen pixels. */
@@ -463,7 +483,8 @@ class DrawBoxController(
     internal fun exportPath(): String {
         val payLoad = PayLoad(
             bgColor = _state.value.bgColor,
-            elements = _state.value.elements
+            elements = _state.value.elements,
+            layers = _state.value.layers,
         )
         return DrawingSerializer.serialize(payLoad)
     }
@@ -476,7 +497,7 @@ class DrawBoxController(
      */
     fun exportSvg() {
         val svgContent = SvgExporter.exportToSvg(
-            elements = _state.value.elements
+            elements = _state.value.visibleElements()
         )
         _events.tryEmit(Event.SvgExported(svgContent))
     }
@@ -502,7 +523,7 @@ class DrawBoxController(
         textMeasurer: TextMeasurer? = null,
     ) {
         val png = PngExporter.exportToPng(
-            elements = _state.value.elements,
+            elements = _state.value.visibleElements(),
             scale = scale,
             background = background,
             textMeasurer = textMeasurer,
@@ -541,6 +562,7 @@ class DrawBoxController(
             reset()
             _state.value = State(
                 elements = payLoad.elements,
+                layers = payLoad.layers,
                 strokeColor = current.strokeColor,
                 strokeWidth = current.strokeWidth,
                 opacity = current.opacity,

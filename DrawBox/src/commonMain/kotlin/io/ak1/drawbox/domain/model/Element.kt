@@ -83,6 +83,22 @@ sealed class Element {
     abstract val modifiedAt: Long
 
     /**
+     * Human-readable, page-unique name assigned automatically when the element
+     * is created (for example `Rectangle 1`, `Group 2`). Used by the layers
+     * screen; blank for elements loaded from documents written before names
+     * existed, in which case a name is generated on load.
+     */
+    abstract val name: String
+
+    /**
+     * ID of the [Layer] this element belongs to, or null when unattached.
+     * Only meaningful on **top-level** elements; nested descendants always
+     * carry null. Layer membership affects visibility and interaction only —
+     * it never changes z-order.
+     */
+    abstract val layerId: String?
+
+    /**
      * Represents a freehand drawn path created in PEN mode.
      *
      * A path is a series of connected points drawn by the user. It's rendered
@@ -146,6 +162,8 @@ sealed class Element {
         val strokeStyle: StrokeStyle = StrokeStyle.SOLID,
         override val createdAt: Long = 0L,
         override val modifiedAt: Long = 0L,
+        override val name: String = "",
+        override val layerId: String? = null,
     ) : Element()
 
     /**
@@ -193,6 +211,8 @@ sealed class Element {
         override val rotation: Float = 0f,
         override val createdAt: Long = 0L,
         override val modifiedAt: Long = 0L,
+        override val name: String = "",
+        override val layerId: String? = null,
     ) : Element() {
         // ByteArray defaults to reference equality, which would make two
         // identical-bytes copies of the same image compare unequal. Override
@@ -211,6 +231,8 @@ sealed class Element {
             if (rotation != other.rotation) return false
             if (createdAt != other.createdAt) return false
             if (modifiedAt != other.modifiedAt) return false
+            if (name != other.name) return false
+            if (layerId != other.layerId) return false
             return bytes.contentEquals(other.bytes)
         }
 
@@ -224,6 +246,8 @@ sealed class Element {
             result = 31 * result + createdAt.hashCode()
             result = 31 * result + modifiedAt.hashCode()
             result = 31 * result + bytes.size
+            result = 31 * result + name.hashCode()
+            result = 31 * result + (layerId?.hashCode() ?: 0)
             return result
         }
     }
@@ -277,6 +301,8 @@ sealed class Element {
         override val rotation: Float = 0f,
         override val createdAt: Long = 0L,
         override val modifiedAt: Long = 0L,
+        override val name: String = "",
+        override val layerId: String? = null,
     ) : Element()
 
     data class Shape(
@@ -329,6 +355,8 @@ sealed class Element {
          * Ignored by [ShapeType.LINE] and [ShapeType.ARROW].
          */
         val fillGradient: ShapeGradient? = null,
+        override val name: String = "",
+        override val layerId: String? = null,
     ) : Element()
 
     /**
@@ -348,6 +376,8 @@ sealed class Element {
         override val rotation: Float = 0f,
         override val createdAt: Long = 0L,
         override val modifiedAt: Long = 0L,
+        override val name: String = "",
+        override val layerId: String? = null,
     ) : Element()
 }
 

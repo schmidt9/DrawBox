@@ -111,6 +111,8 @@ import io.ak1.drawbox.domain.model.effectiveMode
 import io.ak1.drawbox.domain.model.findElementById
 import io.ak1.drawbox.domain.model.flattenElements
 import io.ak1.drawbox.domain.model.hasRotatedAncestor
+import io.ak1.drawbox.domain.model.hiddenLayerTopLevelIds
+import io.ak1.drawbox.domain.model.hittableElements
 import io.ak1.drawbox.domain.model.pathToElement
 import io.ak1.drawbox.domain.model.pointerInElementParentFrame
 import io.ak1.drawbox.domain.model.resolveHitPath
@@ -656,6 +658,8 @@ fun DrawBox(
                 fun onDragStart(screenPos: Offset) {
                     val s = latestState
                     val world = s.viewport.screenToWorld(screenPos)
+                    // Hidden layers count as hidden targets for alignment too.
+                    val hiddenIds = latestHiddenIds + s.hiddenLayerTopLevelIds()
                     lastWorld = world
                     alignmentGuides = emptyList()
                     moveSnap = null
@@ -687,7 +691,7 @@ fun DrawBox(
                                     moveTargets = s.elements.alignmentTargetRects(
                                         excludedSubtreeIds = s.elements.subtreeIds(ids) +
                                             s.elements.rotatedAncestorSubtreeIds(ids),
-                                        hiddenIds = latestHiddenIds,
+                                        hiddenIds = hiddenIds,
                                         movingIds = ids,
                                     )
                                     SelectionInteraction.Move
@@ -702,7 +706,7 @@ fun DrawBox(
                                     moveTargets = s.elements.alignmentTargetRects(
                                         excludedSubtreeIds = s.elements.subtreeIds(ids) +
                                             s.elements.rotatedAncestorSubtreeIds(ids),
-                                        hiddenIds = latestHiddenIds,
+                                        hiddenIds = hiddenIds,
                                         movingIds = ids,
                                     )
                                     classified
@@ -716,7 +720,7 @@ fun DrawBox(
                                         val ids = setOf(classified.elementId)
                                         resizeTargets = s.elements.alignmentTargetRects(
                                             excludedSubtreeIds = s.elements.subtreeIds(ids),
-                                            hiddenIds = latestHiddenIds,
+                                            hiddenIds = hiddenIds,
                                             movingIds = ids,
                                         )
                                     }
@@ -1049,9 +1053,10 @@ fun DrawBox(
 
             // A hidden nested text must invalidate its top-level ancestor group,
             // because the cached layer contains the whole group's pixels.
+            // Layer-hidden roots are treated the same way.
             val hiddenTopLevelIds = hiddenElementIds
                 .map { hidden -> state.elements.topLevelAncestorId(hidden) ?: hidden }
-                .toSet()
+                .toSet() + state.hiddenLayerTopLevelIds()
 
             // Freshness check on the cached layer. Walks orderedElements once,
             // comparing non-active and non-hidden entries against
@@ -1380,13 +1385,15 @@ private fun classifySelection(
         }
     }
     // Drag inside already-selected → move existing selection. Resolve the hit
-    // path so nested (entered-group) selections work.
-    val hitPath = state.elements.resolveHitPath(pointerWorld, pickToleranceWorld)
+    // path so nested (entered-group) selections work. Hidden/locked layers are
+    // not hit-testable.
+    val hittable = state.hittableElements()
+    val hitPath = hittable.resolveHitPath(pointerWorld, pickToleranceWorld)
     if (hitPath.any { it.id in state.selectedIds }) {
         return SelectionInteraction.Move
     }
     // Drag on unselected element → select-then-move.
-    val any = state.elements.resolveTap(
+    val any = hittable.resolveTap(
         state.groupPath,
         pointerWorld,
         pickToleranceWorld,

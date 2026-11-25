@@ -5,4 +5,5 @@ import androidx.compose.ui.graphics.Color
 data class PayLoad(
     val bgColor: Color,
     val elements: List<Element>,
+    val layers: List<Layer> = emptyList(),
 )

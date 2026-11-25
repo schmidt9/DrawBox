@@ -212,6 +212,10 @@ data class ElementDto(
      * frame. Null/absent on leaf elements and in legacy files.
      */
     val children: List<ElementDto>? = null,
+    /** Auto-assigned display name; absent in legacy files. */
+    val name: String? = null,
+    /** Owning layer id; null/absent when the element is unattached. */
+    val layerId: String? = null,
 )
 
 fun Element.toDto(): ElementDto = when (this) {
@@ -228,6 +232,8 @@ fun Element.toDto(): ElementDto = when (this) {
         strokeStyle = strokeStyle.toWireString().takeIf { strokeStyle != StrokeStyle.SOLID },
         createdAt = createdAt.takeIf { it != 0L },
         modifiedAt = modifiedAt.takeIf { it != 0L },
+        name = name.takeIf { it.isNotBlank() },
+        layerId = layerId,
     )
     is Element.Image -> ElementDto(
         id = id,
@@ -245,6 +251,8 @@ fun Element.toDto(): ElementDto = when (this) {
         intrinsicWidth = intrinsicSize.width,
         intrinsicHeight = intrinsicSize.height,
         opacity = opacity.takeIf { it != 1f },
+        name = name.takeIf { it.isNotBlank() },
+        layerId = layerId,
     )
     is Element.Text -> ElementDto(
         id = id,
@@ -270,6 +278,8 @@ fun Element.toDto(): ElementDto = when (this) {
         opacity = opacity.takeIf { it != 1f },
         textTopLeft = topLeft.toJsonString(),
         wrapWidth = wrapWidth,
+        name = name.takeIf { it.isNotBlank() },
+        layerId = layerId,
     )
     is Element.Shape -> ElementDto(
         id = id,
@@ -290,6 +300,8 @@ fun Element.toDto(): ElementDto = when (this) {
         createdAt = createdAt.takeIf { it != 0L },
         modifiedAt = modifiedAt.takeIf { it != 0L },
         strokeEnabled = false.takeIf { !strokeEnabled },
+        name = name.takeIf { it.isNotBlank() },
+        layerId = layerId,
     )
     is Element.Group -> ElementDto(
         id = id,
@@ -303,6 +315,8 @@ fun Element.toDto(): ElementDto = when (this) {
         createdAt = createdAt.takeIf { it != 0L },
         modifiedAt = modifiedAt.takeIf { it != 0L },
         children = children.map { it.toDto() },
+        name = name.takeIf { it.isNotBlank() },
+        layerId = layerId,
     )
 }
 
@@ -322,6 +336,8 @@ fun ElementDto.toElement(): Element = when (type) {
         strokeStyle = strokeStyle.toStrokeStyle(),
         createdAt = createdAt ?: 0L,
         modifiedAt = modifiedAt ?: createdAt ?: 0L,
+        name = name ?: "",
+        layerId = layerId,
     )
     "Image" -> Element.Image(
         id = id,
@@ -336,6 +352,8 @@ fun ElementDto.toElement(): Element = when (type) {
         rotation = rotation ?: 0f,
         createdAt = createdAt ?: 0L,
         modifiedAt = modifiedAt ?: createdAt ?: 0L,
+        name = name ?: "",
+        layerId = layerId,
     )
     "Text" -> {
         val resolvedFontSize = fontSize ?: 24f
@@ -371,6 +389,8 @@ fun ElementDto.toElement(): Element = when (type) {
             rotation = rotation ?: 0f,
             createdAt = createdAt ?: 0L,
             modifiedAt = modifiedAt ?: createdAt ?: 0L,
+            name = name ?: "",
+            layerId = layerId,
         )
     }
     "Shape" -> Element.Shape(
@@ -391,6 +411,8 @@ fun ElementDto.toElement(): Element = when (type) {
         endBinding = endBinding,
         createdAt = createdAt ?: 0L,
         modifiedAt = modifiedAt ?: createdAt ?: 0L,
+        name = name ?: "",
+        layerId = layerId,
     )
     "Group" -> Element.Group(
         id = id,
@@ -399,6 +421,8 @@ fun ElementDto.toElement(): Element = when (type) {
         createdAt = createdAt ?: 0L,
         modifiedAt = modifiedAt ?: createdAt ?: 0L,
         children = children.orEmpty().map { it.toElement() },
+        name = name ?: "",
+        layerId = layerId,
     )
     else -> Element.Path(
         id = id,
@@ -412,22 +436,29 @@ fun ElementDto.toElement(): Element = when (type) {
         strokeStyle = strokeStyle.toStrokeStyle(),
         createdAt = createdAt ?: 0L,
         modifiedAt = modifiedAt ?: createdAt ?: 0L,
+        name = name ?: "",
+        layerId = layerId,
     )
 }
 
 data class DrawingExportDto(
     val bgColor: String,
     val elements: List<ElementDto>,
+    val layers: List<Layer> = emptyList(),
 )
 
 fun PayLoad.toDto(): DrawingExportDto = DrawingExportDto(
     bgColor = bgColor.toHexString(),
     elements = elements.map { it.toDto() },
+    layers = layers,
 )
 
 fun DrawingExportDto.toPayLoad(): PayLoad = PayLoad(
     bgColor = bgColor.toColor(),
-    elements = elements.map { it.toElement() },
+    elements = elements.map { it.toElement() }
+        .withNormalizedNames()
+        .sanitizeLayerIds(layers),
+    layers = layers,
 )
 
 @kotlinx.serialization.Serializable
@@ -464,12 +495,40 @@ data class SerializableElement(
     val textTopLeft: String? = null,
     val wrapWidth: Float? = null,
     val children: List<SerializableElement>? = null,
+    /** Auto-assigned display name; absent in legacy files. */
+    val name: String? = null,
+    /** Owning layer id; absent when the element is unattached. */
+    val layerId: String? = null,
+)
+
+/** Wire format for one page-local layer. */
+@kotlinx.serialization.Serializable
+data class SerializableLayer(
+    val id: String,
+    val name: String,
+    val isVisible: Boolean = true,
+    val isLocked: Boolean = false,
+)
+
+private fun Layer.toSerializableLayer(): SerializableLayer = SerializableLayer(
+    id = id,
+    name = name,
+    isVisible = isVisible,
+    isLocked = isLocked,
+)
+
+private fun SerializableLayer.toLayer(): Layer = Layer(
+    id = id,
+    name = name,
+    isVisible = isVisible,
+    isLocked = isLocked,
 )
 
 @kotlinx.serialization.Serializable
 data class SerializableDrawing(
     val bgColor: String,
     val elements: List<SerializableElement>,
+    val layers: List<SerializableLayer>? = null,
 )
 
 private fun ElementDto.toSerializableElement(): SerializableElement = SerializableElement(
@@ -504,6 +563,8 @@ private fun ElementDto.toSerializableElement(): SerializableElement = Serializab
     textTopLeft = textTopLeft,
     wrapWidth = wrapWidth,
     children = children?.map { it.toSerializableElement() },
+    name = name,
+    layerId = layerId,
 )
 
 private fun SerializableElement.toElementDto(): ElementDto = ElementDto(
@@ -538,16 +599,22 @@ private fun SerializableElement.toElementDto(): ElementDto = ElementDto(
     textTopLeft = textTopLeft,
     wrapWidth = wrapWidth,
     children = children?.map { it.toElementDto() },
+    name = name,
+    layerId = layerId,
 )
 
 object DrawingSerializer {
-    private val json = Json { prettyPrint = true }
+    private val json = Json {
+        prettyPrint = true
+        ignoreUnknownKeys = true
+    }
 
     fun serialize(payLoad: PayLoad): String {
         val dto = payLoad.toDto()
         val serializableDrawing = SerializableDrawing(
             bgColor = dto.bgColor,
             elements = dto.elements.map { it.toSerializableElement() },
+            layers = dto.layers.map { it.toSerializableLayer() },
         )
         return json.encodeToString(SerializableDrawing.serializer(), serializableDrawing)
     }
@@ -557,6 +624,7 @@ object DrawingSerializer {
         val dto = DrawingExportDto(
             bgColor = serializableDrawing.bgColor,
             elements = serializableDrawing.elements.map { it.toElementDto() },
+            layers = serializableDrawing.layers.orEmpty().map { it.toLayer() },
         )
         return dto.toPayLoad()
     }
@@ -571,6 +639,7 @@ data class PagePayLoad(
     val name: String,
     val bgColor: Color,
     val elements: List<Element>,
+    val layers: List<Layer> = emptyList(),
 )
 
 /** A multi-page document plus the page the editor should open. */
@@ -585,6 +654,8 @@ data class SerializablePage(
     val name: String,
     val bgColor: String,
     val elements: List<SerializableElement>,
+    /** Page-local layers; null/absent in documents written before layers. */
+    val layers: List<SerializableLayer>? = null,
 )
 
 @kotlinx.serialization.Serializable
@@ -602,14 +673,21 @@ private fun PagePayLoad.toSerializablePage(): SerializablePage = SerializablePag
     name = name,
     bgColor = bgColor.toHexString(),
     elements = elements.map { it.toDto().toSerializableElement() },
+    layers = layers.map { it.toSerializableLayer() },
 )
 
-private fun SerializablePage.toPagePayLoad(): PagePayLoad = PagePayLoad(
-    id = id,
-    name = name,
-    bgColor = bgColor.toColor(),
-    elements = elements.map { it.toElementDto().toElement() },
-)
+private fun SerializablePage.toPagePayLoad(): PagePayLoad {
+    val layers = layers.orEmpty().map { it.toLayer() }
+    return PagePayLoad(
+        id = id,
+        name = name,
+        bgColor = bgColor.toColor(),
+        elements = elements.map { it.toElementDto().toElement() }
+            .withNormalizedNames()
+            .sanitizeLayerIds(layers),
+        layers = layers,
+    )
+}
 
 /**
  * JSON codec for multi-page documents. Reuses the element wire format of
@@ -619,7 +697,7 @@ private fun SerializablePage.toPagePayLoad(): PagePayLoad = PagePayLoad(
  */
 object PagesDrawingSerializer {
     /** Current document format version written as `version`. */
-    const val FORMAT_VERSION: Int = 2
+    const val FORMAT_VERSION: Int = 3
 
     private val json = Json {
         prettyPrint = true

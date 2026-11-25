@@ -126,10 +126,26 @@ enum class ResizeHandle {
  * @see Mode
  * @see BackgroundPattern
  */
+/**
+ * One undo/redo checkpoint. Elements and layers are captured atomically so a
+ * layer deletion can restore its attached shapes and the layer itself in one
+ * step.
+ */
+data class StateSnapshot(
+    val elements: List<Element> = emptyList(),
+    val layers: List<Layer> = emptyList(),
+)
+
 data class State(
     val elements: List<Element> = emptyList(),
-    val history: List<List<Element>> = emptyList(),
-    val future: List<List<Element>> = emptyList(),
+    /**
+     * Page-local layers in creation order. Layers control visibility and
+     * interaction of attached top-level elements; they never affect z-order
+     * and cannot be reordered.
+     */
+    val layers: List<Layer> = emptyList(),
+    val history: List<StateSnapshot> = emptyList(),
+    val future: List<StateSnapshot> = emptyList(),
     val selectedIds: Set<String> = emptySet(),
     /**
      * IDs of entered groups, outermost first. Transient selection scope: while

@@ -4,17 +4,25 @@ import androidx.compose.ui.geometry.Offset
 import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.HISTORY_CAP
 import io.ak1.drawbox.domain.model.Intent
+import io.ak1.drawbox.domain.model.Layer
 import io.ak1.drawbox.domain.model.Mode
 import io.ak1.drawbox.domain.model.State
+import io.ak1.drawbox.domain.model.StateSnapshot
 import io.ak1.drawbox.domain.model.ToolSettings
 import io.ak1.drawbox.domain.model.Viewport
 import io.ak1.drawbox.domain.model.allElementIds
 import io.ak1.drawbox.domain.model.childrenAt
+import io.ak1.drawbox.domain.model.excludedTopLevelIds
 import io.ak1.drawbox.domain.model.findElementById
 import io.ak1.drawbox.domain.model.flattenElements
+import io.ak1.drawbox.domain.model.hittableElements
+import io.ak1.drawbox.domain.model.isLayerNameTaken
+import io.ak1.drawbox.domain.model.normalizeLayerName
 import io.ak1.drawbox.domain.model.persistsSettings
 import io.ak1.drawbox.domain.model.resolveTap
 import io.ak1.drawbox.domain.model.sanitizeGroupPath
+import io.ak1.drawbox.domain.model.sanitizeGroupPathForExcludedIds
+import io.ak1.drawbox.domain.model.subtreeIdsOf
 import io.ak1.drawbox.domain.usecase.UseCase
 
 /**
@@ -264,7 +272,7 @@ class Reducer(
 
         // Selection
         is Intent.SelectAt -> {
-            val resolution = state.elements.resolveTap(
+            val resolution = state.hittableElements().resolveTap(
                 state.groupPath,
                 intent.offset,
                 intent.tolerance,
@@ -283,8 +291,11 @@ class Reducer(
             }
         }
         is Intent.DoubleTapAt -> {
-            val path = state.elements.sanitizeGroupPath(state.groupPath)
-            val resolution = state.elements.resolveTap(path, intent.offset, intent.tolerance)
+            val path = state.elements.sanitizeGroupPathForExcludedIds(
+                state.elements.sanitizeGroupPath(state.groupPath),
+                state.excludedTopLevelIds(),
+            )
+            val resolution = state.hittableElements().resolveTap(path, intent.offset, intent.tolerance)
             val target = resolution.target ?: return@reduce state
             if (target is Element.Group) {
                 val basePath = if (resolution.insideEnteredScope) path else emptyList()
@@ -300,8 +311,9 @@ class Reducer(
         }
         is Intent.RequestTextEditAt -> {
             // Select the tapped text so the edit target is the sole selection;
-            // the controller emits Event.TextEditRequested off this.
-            val resolution = state.elements.resolveTap(
+            // the controller emits Event.TextEditRequested off this. Hidden and
+            // locked layers are excluded so their text cannot be edited.
+            val resolution = state.hittableElements().resolveTap(
                 state.groupPath,
                 intent.offset,
                 intent.tolerance,
@@ -382,7 +394,11 @@ class Reducer(
         }
         is Intent.SetMarqueeRect -> state.copy(marqueeRect = intent.rect)
         is Intent.CommitMarquee -> state.copy(
-            selectedIds = useCase.selectInRect(state.elements, intent.rect, state.groupPath),
+            selectedIds = useCase.selectInRect(
+                state.hittableElements(),
+                intent.rect,
+                state.groupPath,
+            ),
             marqueeRect = null,
         )
         is Intent.ClearSelection -> state.copy(selectedIds = emptySet())
@@ -491,7 +507,12 @@ class Reducer(
             // tap or drag through empty space pushes nothing to history. The
             // eraseAt helper returns the same list instance when no element is
             // hit, so we can detect a miss by reference and short-circuit.
-            val next = useCase.eraseAt(state.elements, intent.point, intent.radius)
+            val next = useCase.eraseAt(
+                state.elements,
+                intent.point,
+                intent.radius,
+                excludedTopLevelIds = state.excludedTopLevelIds(),
+            )
             if (next === state.elements) state
             else {
                 val base = if (!state.erasingSessionDirty) state.snapshot() else state
@@ -535,14 +556,105 @@ class Reducer(
         is Intent.ResetCamera -> state.copy(viewport = Viewport())
         is Intent.SetTempPan -> state.copy(tempPanActive = intent.active)
 
+        // Layers
+        is Intent.AddLayer -> {
+            val name = normalizeLayerName(intent.name)
+            if (name.isEmpty() || isLayerNameTaken(name, state.layers)) {
+                state
+            } else {
+                state.snapshot().copy(
+                    layers = state.layers + Layer(id = intent.id, name = name),
+                )
+            }
+        }
+        is Intent.RenameLayer -> {
+            val layer = state.layers.firstOrNull { it.id == intent.id }
+            val name = normalizeLayerName(intent.name)
+            when {
+                layer == null || name.isEmpty() || name == layer.name -> state
+                isLayerNameTaken(name, state.layers, excludingId = intent.id) -> state
+                else -> state.snapshot().copy(
+                    layers = state.layers.map {
+                        if (it.id == intent.id) it.copy(name = name) else it
+                    },
+                )
+            }
+        }
+        is Intent.DeleteLayer -> {
+            if (state.layers.none { it.id == intent.id }) {
+                state
+            } else {
+                val removedRoots = state.elements
+                    .filter { it.layerId == intent.id }
+                    .mapTo(hashSetOf()) { it.id }
+                val removedIds = state.elements.subtreeIdsOf(removedRoots)
+                val nextElements = useCase.deleteLayerElements(state.elements, intent.id)
+                state.snapshot().copy(
+                    layers = state.layers.filterNot { it.id == intent.id },
+                    elements = nextElements,
+                    selectedIds = state.selectedIds - removedIds,
+                    groupPath = nextElements.sanitizeGroupPath(
+                        nextElements.sanitizeGroupPathForExcludedIds(
+                            state.groupPath,
+                            removedRoots,
+                        ),
+                    ),
+                    activePolygonId = state.activePolygonId?.takeIf { it !in removedIds },
+                )
+            }
+        }
+        is Intent.SetLayerVisible -> {
+            val layer = state.layers.firstOrNull { it.id == intent.id }
+            if (layer == null || layer.isVisible == intent.visible) {
+                state
+            } else {
+                val next = state.snapshot().copy(
+                    layers = state.layers.map {
+                        if (it.id == intent.id) it.copy(isVisible = intent.visible) else it
+                    },
+                )
+                if (intent.visible) next else next.clearExcludedSelection()
+            }
+        }
+        is Intent.SetLayerLocked -> {
+            val layer = state.layers.firstOrNull { it.id == intent.id }
+            if (layer == null || layer.isLocked == intent.locked) {
+                state
+            } else {
+                val next = state.snapshot().copy(
+                    layers = state.layers.map {
+                        if (it.id == intent.id) it.copy(isLocked = intent.locked) else it
+                    },
+                )
+                if (intent.locked) next.clearExcludedSelection() else next
+            }
+        }
+        is Intent.SetElementsLayer -> {
+            val targetMissing = intent.layerId != null &&
+                state.layers.none { it.id == intent.layerId }
+            if (targetMissing) {
+                state
+            } else {
+                val next = useCase.assignLayer(
+                    state.elements,
+                    intent.elementIds,
+                    intent.layerId,
+                )
+                if (next == state.elements) state
+                else state.snapshot().copy(elements = next)
+            }
+        }
+
         // History
         is Intent.Undo -> {
             val prev = state.history.lastOrNull() ?: return@reduce state
             state.copy(
-                elements = prev,
+                elements = prev.elements,
+                layers = prev.layers,
                 history = state.history.dropLast(1),
-                future = (state.future + listOf(state.elements)).takeLast(HISTORY_CAP),
-                selectedIds = state.selectedIds.intersect(prev.map { it.id }.toSet()),
+                future = (state.future + StateSnapshot(state.elements, state.layers))
+                    .takeLast(HISTORY_CAP),
+                selectedIds = state.selectedIds.intersect(prev.elements.map { it.id }.toSet()),
                 groupPath = emptyList(),
                 activePolygonId = null,
             )
@@ -550,10 +662,12 @@ class Reducer(
         is Intent.Redo -> {
             val next = state.future.lastOrNull() ?: return@reduce state
             state.copy(
-                elements = next,
+                elements = next.elements,
+                layers = next.layers,
                 future = state.future.dropLast(1),
-                history = (state.history + listOf(state.elements)).takeLast(HISTORY_CAP),
-                selectedIds = state.selectedIds.intersect(next.map { it.id }.toSet()),
+                history = (state.history + StateSnapshot(state.elements, state.layers))
+                    .takeLast(HISTORY_CAP),
+                selectedIds = state.selectedIds.intersect(next.elements.map { it.id }.toSet()),
                 groupPath = emptyList(),
                 activePolygonId = null,
             )
@@ -571,9 +685,24 @@ class Reducer(
     fun hitTopmost(elements: List<Element>, point: Offset, tolerance: Float): Element? =
         useCase.hitTopmost(elements, point, tolerance)
 
-    /** Push current elements onto [State.history] and clear [State.future]. */
+    /** Push current elements and layers onto [State.history] and clear [State.future]. */
     private fun State.snapshot(): State = copy(
-        history = (history + listOf(elements)).takeLast(HISTORY_CAP),
+        history = (history + StateSnapshot(elements, layers)).takeLast(HISTORY_CAP),
         future = emptyList(),
     )
+
+    /**
+     * Drops selection, group scope, and any in-progress polygon that belong to
+     * a hidden or locked layer. Called after a layer becomes hidden/locked.
+     */
+    private fun State.clearExcludedSelection(): State {
+        val excluded = excludedTopLevelIds(includeLocked = true)
+        if (excluded.isEmpty()) return this
+        val excludedIds = elements.subtreeIdsOf(excluded)
+        return copy(
+            selectedIds = selectedIds - excludedIds,
+            groupPath = elements.sanitizeGroupPathForExcludedIds(groupPath, excluded),
+            activePolygonId = activePolygonId?.takeIf { it !in excludedIds },
+        )
+    }
 }
