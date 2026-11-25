@@ -1,6 +1,22 @@
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+// Skiko (the Skia bindings Compose text layout uses) resolves its native
+// runtime by the *publishing* host's classifier for a jvm()-only module, not
+// the host running the tests. Pin the runtime to the host executing the tests
+// so jvmTest can lay out real text. Mirrors shared/build.gradle.kts.
+val skikoVersion = "0.144.6"
+val skikoTarget = run {
+    val os = System.getProperty("os.name").lowercase()
+    val arch = System.getProperty("os.arch").lowercase()
+    val isArm = arch.contains("aarch64") || arch.contains("arm")
+    when {
+        os.contains("mac") || os.contains("darwin") -> if (isArm) "macos-arm64" else "macos-x64"
+        os.contains("win") -> "windows-x64"
+        else -> if (isArm) "linux-arm64" else "linux-x64"
+    }
+}
+
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidMultiplatformLibrary)
@@ -55,6 +71,10 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+        }
+        jvmTest.dependencies {
+            // Native Skiko runtime for the host executing the tests (see top).
+            runtimeOnly("org.jetbrains.skiko:skiko-awt-runtime-$skikoTarget:$skikoVersion")
         }
     }
 }

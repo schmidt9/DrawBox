@@ -13,7 +13,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.TextAlignment
@@ -35,14 +34,11 @@ import io.ak1.drawbox.domain.model.Viewport
  *
  * The implementation deliberately mirrors the SDK's text rendering path:
  *
- * - `TextStyle.fontSize` is `(element.fontSize × viewport.scale).sp`
- *   *directly* — NOT `.toSp()`. `Density.toSp(Float)` treats its input as
- *   dp-equivalent and divides by `fontScale`; feeding it screen pixels
- *   would shrink the editor by `1 / fontScale` whenever the system text
- *   scale is non-unit. Going `.sp` direct routes editor and renderer
- *   through the same final conversion (`fontSize × density × fontScale`),
- *   so on-screen pixels match across any density / fontScale /
- *   viewport.scale combination.
+ * - `TextStyle.fontSize` converts the screen-pixel size
+ *   `element.fontSize × viewport.scale` back to `sp` through the local
+ *   `Density`. The renderer lays text out in world pixels (density 1, see
+ *   `WorldTextDensity`), so a raw `.sp` here would render the editor
+ *   `density × fontScale` larger than the committed text on Android.
  * - `width = element.wrapWidth × viewport.scale` (no `fillMaxWidth`) — the
  *   field wraps at the same point as `TextMeasurer.measure(constraints =
  *   Constraints(maxWidth = wrapWidth))`.
@@ -93,10 +89,11 @@ fun InlineTextEditor(
     val screenTopLeft = viewport.worldToScreen(element.topLeft)
     val screenWidth = element.wrapWidth * viewport.scale
 
-    val widthDp = with(androidx.compose.ui.platform.LocalDensity.current) {
-        screenWidth.toDp()
-    }
-    val fontSizeSp = (element.fontSize * viewport.scale).sp
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val widthDp = with(density) { screenWidth.toDp() }
+    // World pixels → screen pixels → sp so the field's glyphs match the
+    // renderer's (which lays out in world pixels; see the class doc).
+    val fontSizeSp = with(density) { (element.fontSize * viewport.scale).toSp() }
 
     val focusRequester = remember(element.id) { FocusRequester() }
     LaunchedEffect(element.id) {

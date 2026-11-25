@@ -11,6 +11,7 @@ import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import io.ak1.drawbox.domain.model.Element
@@ -259,6 +260,20 @@ private const val MIN_MIP_PX: Int = 128
 private const val MAX_MIP_PX: Int = 2048
 
 /**
+ * Layout density for [Element.Text]: world pixels map 1:1 onto layout pixels.
+ *
+ * `Element.Text.fontSize`, `wrapWidth` and `measuredHeight` are all world
+ * units, and the wrap box is expressed in the same world space as every other
+ * element. Measuring at the device density (the [TextMeasurer] default) would
+ * multiply the glyph size by `density × fontScale`, so the same document would
+ * render with different text-to-geometry ratios on Android (density ≈ 3) and
+ * on desktop (density 1) — and would disagree with `SvgExporter`, which emits
+ * `fontSize` as world units. Laying out at density 1 / fontScale 1 keeps one
+ * canonical pixel size across platforms and system font-scale settings.
+ */
+private val WorldTextDensity = Density(density = 1f, fontScale = 1f)
+
+/**
  * Per-canvas cache of [TextLayoutResult] entries for [Element.Text]
  * elements. Laying out a multi-line block runs the platform text shaper —
  * cheap individually but cumulative across hundreds of elements per frame.
@@ -304,6 +319,9 @@ internal class TextLayoutCache {
             style = style,
             constraints = Constraints(maxWidth = wrapWidth.toInt().coerceAtLeast(1)),
             softWrap = true,
+            // `fontSize.sp` under this density = `fontSize` layout pixels, i.e.
+            // world units (see [WorldTextDensity]).
+            density = WorldTextDensity,
         )
         byId[id] = Entry(key, layout)
         return layout
