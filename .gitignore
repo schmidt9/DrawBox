@@ -28,3 +28,4 @@ local.properties
 /PLAYBOOK.md
 /ARCHIVE_MODEL.md
 /drawbox-ui/build/
+.claude/
