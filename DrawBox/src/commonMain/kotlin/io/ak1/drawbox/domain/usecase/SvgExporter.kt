@@ -462,6 +462,7 @@ object SvgExporter {
         }
         val color = colorToHex(text.color)
         val opacityAttr = if (text.opacity != 1f) """ opacity="${text.opacity}"""" else ""
+        val weightAttr = if (text.bold) """ font-weight="bold"""" else ""
         val transformAttr = if (text.rotation != 0f) {
             val cx = x + w * 0.5f
             val cy = y + h * 0.5f
@@ -477,7 +478,7 @@ object SvgExporter {
             val dy = if (i == 0) text.fontSize else lineHeight
             """<tspan x="$anchorX" dy="$dy">${escapeXml(line)}</tspan>"""
         }.joinToString("")
-        return """<text x="$anchorX" y="$y" font-family="${escapeXmlAttr(text.fontFamilyKey)}" font-size="${text.fontSize}" fill="$color" text-anchor="$anchor"$opacityAttr$transformAttr>$tspans</text>"""
+        return """<text x="$anchorX" y="$y" font-family="${escapeXmlAttr(text.fontFamilyKey)}" font-size="${text.fontSize}" fill="$color"$weightAttr text-anchor="$anchor"$opacityAttr$transformAttr>$tspans</text>"""
     }
 
     /**

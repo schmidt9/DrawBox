@@ -207,6 +207,8 @@ data class ElementDto(
     val textTopLeft: String? = null,
     /** World-space wrap width for a text element. */
     val wrapWidth: Float? = null,
+    /** Bold text flag; absent/null means normal weight. */
+    val bold: Boolean? = null,
     /**
      * Nested children of a `"Group"` element, in the group's local coordinate
      * frame. Null/absent on leaf elements and in legacy files.
@@ -278,6 +280,7 @@ fun Element.toDto(): ElementDto = when (this) {
         opacity = opacity.takeIf { it != 1f },
         textTopLeft = topLeft.toJsonString(),
         wrapWidth = wrapWidth,
+        bold = true.takeIf { bold },
         name = name.takeIf { it.isNotBlank() },
         layerId = layerId,
     )
@@ -391,6 +394,7 @@ fun ElementDto.toElement(): Element = when (type) {
             modifiedAt = modifiedAt ?: createdAt ?: 0L,
             name = name ?: "",
             layerId = layerId,
+            bold = bold == true,
         )
     }
     "Shape" -> Element.Shape(
@@ -494,6 +498,8 @@ data class SerializableElement(
     val alignment: String? = null,
     val textTopLeft: String? = null,
     val wrapWidth: Float? = null,
+    /** Bold text flag; absent/null means normal weight. */
+    val bold: Boolean? = null,
     val children: List<SerializableElement>? = null,
     /** Auto-assigned display name; absent in legacy files. */
     val name: String? = null,
@@ -562,6 +568,7 @@ private fun ElementDto.toSerializableElement(): SerializableElement = Serializab
     alignment = alignment,
     textTopLeft = textTopLeft,
     wrapWidth = wrapWidth,
+    bold = bold,
     children = children?.map { it.toSerializableElement() },
     name = name,
     layerId = layerId,
@@ -598,6 +605,7 @@ private fun SerializableElement.toElementDto(): ElementDto = ElementDto(
     alignment = alignment,
     textTopLeft = textTopLeft,
     wrapWidth = wrapWidth,
+    bold = bold,
     children = children?.map { it.toElementDto() },
     name = name,
     layerId = layerId,

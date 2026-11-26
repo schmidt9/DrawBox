@@ -303,6 +303,11 @@ sealed class Element {
         override val modifiedAt: Long = 0L,
         override val name: String = "",
         override val layerId: String? = null,
+        /**
+         * Render with the platform bold face. Optional and false by default so
+         * documents written before bold existed load unchanged.
+         */
+        val bold: Boolean = false,
     ) : Element()
 
     data class Shape(

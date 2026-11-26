@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
@@ -279,8 +280,8 @@ private val WorldTextDensity = Density(density = 1f, fontScale = 1f)
  * cheap individually but cumulative across hundreds of elements per frame.
  *
  * The cache key is the tuple of fields that participate in layout: the
- * text content, font family key, font size, alignment, and wrap width.
- * Anything else (color, opacity, rotation, position) is applied at draw
+ * text content, font family key, font size, alignment, bold flag and wrap
+ * width. Anything else (color, opacity, rotation, position) is applied at draw
  * time and doesn't invalidate the layout.
  *
  * Entries survive recompositions via `remember`; stale entries are
@@ -293,6 +294,7 @@ internal class TextLayoutCache {
         val fontSize: Float,
         val alignment: TextAlignment,
         val wrapWidth: Float,
+        val bold: Boolean,
     )
     private data class Entry(val key: Key, val layout: TextLayoutResult)
     private val byId = HashMap<String, Entry>()
@@ -305,14 +307,16 @@ internal class TextLayoutCache {
         alignment: TextAlignment,
         wrapWidth: Float,
         measurer: TextMeasurer,
+        bold: Boolean = false,
     ): TextLayoutResult {
-        val key = Key(text, fontFamilyKey, fontSize, alignment, wrapWidth)
+        val key = Key(text, fontFamilyKey, fontSize, alignment, wrapWidth, bold)
         val existing = byId[id]
         if (existing != null && existing.key == key) return existing.layout
         val style = TextStyle(
             fontSize = fontSize.sp,
             fontFamily = FontRegistry.resolve(fontFamilyKey),
             textAlign = alignment.toComposeAlign(),
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
         )
         val layout = measurer.measure(
             text = text,

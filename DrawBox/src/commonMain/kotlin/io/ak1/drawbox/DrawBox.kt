@@ -273,6 +273,7 @@ fun DrawBox(
                 alignment = el.alignment,
                 wrapWidth = el.wrapWidth.coerceAtLeast(1f),
                 measurer = textMeasurer,
+                bold = el.bold,
             )
             val measured = layout.size.height.toFloat()
             if (kotlin.math.abs(measured - el.measuredHeight) > 0.5f) {
@@ -1976,6 +1977,7 @@ private fun DrawScope.drawTextElement(
         alignment = element.alignment,
         wrapWidth = wrapWidth,
         measurer = textMeasurer,
+        bold = element.bold,
     )
     drawText(
         textLayoutResult = layout,

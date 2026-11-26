@@ -69,6 +69,7 @@ class PagesSerializationTest {
             wrapWidth = 240f,
             measuredHeight = 30f,
             zIndex = 1,
+            bold = true,
         )
 
         val json = PagesDrawingSerializer.serialize(
@@ -94,6 +95,7 @@ class PagesSerializationTest {
         assertEquals("Hello", loadedText.text)
         assertEquals(Offset(10f, 20f), loadedText.topLeft)
         assertEquals(240f, loadedText.wrapWidth)
+        assertTrue(loadedText.bold)
     }
 
     @Test
