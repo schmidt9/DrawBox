@@ -176,17 +176,16 @@ class DrawBoxController(
         // Handle side effects
         when (intent) {
             is Intent.LoadDrawing -> emitLoadEvent()
-            // Double-tap in SELECT mode: open the editor for the hit text.
+            // In-place editing targets: double-tap in SELECT, a text-tool tap on
+            // an existing text, and a host retarget while an editor is open.
             is Intent.RequestTextEditAt ->
-                prev.hittableElements().resolveTap(prev.groupPath, intent.offset, intent.tolerance)
-                    .target
-                    .let { it as? Element.Text }
-                    ?.let { _events.tryEmit(Event.TextEditRequested(it.id)) }
+                emitTextEditIfHit(prev, intent.offset, intent.tolerance)
             is Intent.DoubleTapAt ->
-                prev.hittableElements().resolveTap(prev.groupPath, intent.offset, intent.tolerance)
-                    .target
-                    .let { it as? Element.Text }
-                    ?.let { _events.tryEmit(Event.TextEditRequested(it.id)) }
+                emitTextEditIfHit(prev, intent.offset, intent.tolerance)
+            // A miss was turned into an empty insert by the reducer, so only a
+            // text hit emits here.
+            is Intent.TapTextAt ->
+                emitTextEditIfHit(prev, intent.offset, intent.tolerance)
             // Second tap on an already-sole-selected text opens the editor too
             // (tldraw/Figma pattern). `prev` is the pre-reduce selection.
             is Intent.SelectAt -> {
@@ -201,6 +200,16 @@ class DrawBoxController(
 
             }
         }
+    }
+
+    /** Emits [Event.TextEditRequested] when the tap at [offset] resolves to a
+     * text in [prev]'s scope; a miss is silent. */
+    private fun emitTextEditIfHit(prev: State, offset: Offset, tolerance: Float) {
+        prev.hittableElements()
+            .resolveTap(prev.groupPath, offset, tolerance)
+            .target
+            .let { it as? Element.Text }
+            ?.let { _events.tryEmit(Event.TextEditRequested(it.id)) }
     }
 
     private fun updateHistoryState() {

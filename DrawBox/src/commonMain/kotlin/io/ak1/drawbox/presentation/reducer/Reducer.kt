@@ -74,18 +74,33 @@ class Reducer(
                 intent.newPoint, state.elements, intent.pressure,
             ),
         )
-        is Intent.InsertText -> {
-            val newText = useCase.insertText(
-                intent.text,
-                intent.position,
-                intent.fontSize,
-                intent.fontFamilyKey,
-                intent.alignment,
-                intent.color,
-            )
-            state.snapshot().copy(
-                elements = useCase.addElement(newText, state.elements),
-            )
+        is Intent.InsertText -> insertText(state, intent)
+        is Intent.TapTextAt -> {
+            // Text-tool tap: edit the text under the pointer, if any. A miss
+            // inserts a new empty text, exactly like InsertText.
+            val hit = state.hittableElements().resolveTap(
+                state.groupPath,
+                intent.offset,
+                intent.tolerance,
+            ).target
+            if (hit is Element.Text) {
+                // Opening an editor is a selection change, not a document edit.
+                state.copy(selectedIds = setOf(hit.id))
+            } else {
+                // TEXT mode never keeps a selection: a text that was just
+                // edited must not stay selected while a new one is typed.
+                insertText(
+                    state,
+                    Intent.InsertText(
+                        text = "",
+                        position = intent.offset,
+                        fontSize = state.currentItemFontSize,
+                        fontFamilyKey = state.currentItemFontFamilyKey,
+                        alignment = state.currentItemTextAlignment,
+                        color = state.strokeColor,
+                    ),
+                ).copy(selectedIds = emptySet())
+            }
         }
         is Intent.UpdateText -> state.snapshot().copy(
             elements = useCase.updateText(state.elements, intent.id, intent.text),
@@ -737,6 +752,24 @@ class Reducer(
         history = (history + StateSnapshot(elements, layers)).takeLast(HISTORY_CAP),
         future = emptyList(),
     )
+
+    /**
+     * Insert [intent]'s text and snapshot history once. Shared by
+     * [Intent.InsertText] and the insert fallback of [Intent.TapTextAt].
+     */
+    private fun insertText(state: State, intent: Intent.InsertText): State {
+        val newText = useCase.insertText(
+            intent.text,
+            intent.position,
+            intent.fontSize,
+            intent.fontFamilyKey,
+            intent.alignment,
+            intent.color,
+        )
+        return state.snapshot().copy(
+            elements = useCase.addElement(newText, state.elements),
+        )
+    }
 
     /**
      * Drops selection, group scope, and any in-progress polygon that belong to

@@ -136,6 +136,17 @@ sealed class Intent {
     ) : Intent()
 
     /**
+     * Tap with the text tool ([Mode.TEXT]). Resolves the topmost text at
+     * [offset] in the current group scope; when one is hit it becomes the sole
+     * selection (no history snapshot) and the controller emits
+     * [Event.TextEditRequested] so the host can open its inline editor. On a
+     * miss, inserts a new empty [Element.Text] at [offset] with the State's
+     * preconfigured text defaults, exactly like [InsertText] (one history
+     * snapshot).
+     */
+    data class TapTextAt(val offset: Offset, val tolerance: Float = 8f) : Intent()
+
+    /**
      * Replace the [text] content of an existing [Element.Text]. Snapshots
      * history so a typing session can be undone as a single revision when
      * the embedder commits with a single dispatch (typical for modal
@@ -308,10 +319,11 @@ sealed class Intent {
 
     /**
      * Request in-place text editing at [offset] (dispatched on a double-tap in
-     * [Mode.SELECT]). Selects the topmost [Element.Text] under the point within
-     * [tolerance]; when one is hit, the controller emits
-     * [Event.TextEditRequested]. A no-op when the topmost hit is not a text
-     * element. Not undoable — selection changes only.
+     * [Mode.SELECT]; hosts also use it to switch editors when the user taps
+     * another text while one is being edited). Selects the topmost
+     * [Element.Text] under the point within [tolerance]; when one is hit, the
+     * controller emits [Event.TextEditRequested]. A no-op when the topmost hit
+     * is not a text element. Not undoable — selection changes only.
      */
     data class RequestTextEditAt(val offset: Offset, val tolerance: Float = 8f) : Intent()
 

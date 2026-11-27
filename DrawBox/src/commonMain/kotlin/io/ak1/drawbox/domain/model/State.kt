@@ -47,10 +47,11 @@ sealed class Mode {
     /** Pan mode - drag pans the camera; useful for navigating the infinite canvas */
     data object PAN : Mode()
     /**
-     * Plain-text mode — tap on the canvas inserts an empty [Element.Text]
-     * at the tap position. The sample app opens a modal text field to
-     * gather the actual content; embedders can mirror that pattern or
-     * provide an inline editor (out of scope for OSS v1).
+     * Plain-text mode — a tap on a top-level [Element.Text] opens it for
+     * in-place editing ([Event.TextEditRequested]); a tap on empty canvas
+     * inserts a new empty [Element.Text] at the tap position. The sample app
+     * opens a modal text field to gather the actual content; embedders can
+     * mirror that pattern or provide an inline editor.
      */
     data object TEXT : Mode()
     /**

@@ -55,14 +55,18 @@ import io.ak1.drawbox.domain.model.Viewport
  * events. Recommended host flow:
  *
  * 1. When the user enters TEXT mode and taps, the SDK dispatches
- *    `Intent.InsertText("")` from the canvas tap handler.
- * 2. Host detects a new empty `Element.Text` (e.g. via a
- *    `LaunchedEffect(state.elements)`), records its id as `editingId`,
- *    seeds `draft = ""`.
+ *    `Intent.TapTextAt` from the canvas tap handler. A tap on an existing
+ *    top-level text selects it and emits [io.ak1.drawbox.domain.model.Event.TextEditRequested]
+ *    instead of inserting; a miss inserts a new empty `Element.Text`.
+ * 2. Host detects the edit request (event) or a new empty `Element.Text`
+ *    (e.g. via a `LaunchedEffect(state.elements)`), records its id as
+ *    `editingId`, seeds `draft` from the text.
  * 3. Host passes `hiddenElementIds = setOf(editingId)` to `DrawBox`.
  * 4. Host renders this composable + a full-screen click-catcher overlay.
  *    Tapping outside the field triggers commit (`updateText(id, draft)`
- *    if non-empty, else `Intent.DeleteElement(id)`).
+ *    if non-empty, else `Intent.DeleteElement(id)`). A host that has an
+ *    editor open can dispatch `Intent.RequestTextEditAt` with the outside
+ *    tap's world point to switch straight to the tapped text.
  *
  * ### Font family
  *

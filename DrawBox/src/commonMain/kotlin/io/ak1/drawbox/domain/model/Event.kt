@@ -19,10 +19,13 @@ sealed class Event {
     data class Error(val message: String, val throwable: Throwable? = null) : Event()
 
     /**
-     * The user requested in-place editing of a text element — a double-tap on
-     * an [Element.Text] in [Mode.SELECT], or a second tap on an
-     * already-selected one. The element is selected as a side effect; the host
-     * opens its inline editor for [id]. See docs/rfcs/0001-text-elements.md.
+     * The user requested in-place editing of a text element — a tap with the
+     * Text tool on an existing top-level text ([Intent.TapTextAt]), a double-tap
+     * on an [Element.Text] in [Mode.SELECT], a second tap on an
+     * already-selected one, or a host retargeting the editor while it is open
+     * ([Intent.RequestTextEditAt]). The element is selected as a side effect;
+     * the host opens its inline editor for [id]. See
+     * docs/rfcs/0001-text-elements.md.
      */
     data class TextEditRequested(val id: String) : Event()
 }

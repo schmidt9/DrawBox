@@ -16,6 +16,17 @@ The `2.0.x` line is the Kotlin Multiplatform rewrite. The `1.x` line was an Andr
   (transparent by default), and an optional `TextMeasurer` for real text glyphs.
   Unlike the removed screen-capture route it needs no composed canvas and is not
   limited to the current viewport.
+- **Text-tool tap-to-edit (`Intent.TapTextAt`).** A tap in `TEXT` mode that lands
+  on an existing top-level `Element.Text` selects it and emits
+  `Event.TextEditRequested` instead of inserting a second empty text; a tap on
+  empty canvas (or on a text inside a group, or on a hidden/locked layer) still
+  inserts a new empty text with the State's text defaults.
+  `Intent.RequestTextEditAt` also serves hosts that retarget an open inline
+  editor when the user taps another text.
+
+### Changed
+- `TEXT`-mode taps no longer stack an empty text on top of the text under the
+  pointer; see `Intent.TapTextAt` above.
 
 ### Removed
 - **BREAKING: on-screen bitmap capture.** `DrawBoxController.saveBitmap()`,

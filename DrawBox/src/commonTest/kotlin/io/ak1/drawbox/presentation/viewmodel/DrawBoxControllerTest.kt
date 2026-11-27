@@ -4,6 +4,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import io.ak1.drawbox.domain.model.DrawingSerializer
 import io.ak1.drawbox.domain.model.Element
+import io.ak1.drawbox.domain.model.Event
 import io.ak1.drawbox.domain.model.Intent
 import io.ak1.drawbox.domain.model.Mode
 import io.ak1.drawbox.domain.model.PayLoad
@@ -20,6 +21,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -105,6 +107,55 @@ class DrawBoxControllerTest {
         job.join()
 
         assertEquals(Color.Blue, stateAtEmission)
+    }
+
+    // ===== Text tool tap =====
+
+    private fun text(id: String): Element.Text = Element.Text(
+        id = id,
+        text = "hello",
+        fontSize = 16f,
+        color = Color.Black,
+        topLeft = Offset(0f, 0f),
+        wrapWidth = 100f,
+        measuredHeight = 40f,
+    )
+
+    @Test
+    fun textTapOnExistingTextEmitsTextEditRequested() = runTest(StandardTestDispatcher()) {
+        val controller = DrawBoxController(
+            Reducer(UseCase()),
+            State(elements = listOf(text("t")), mode = Mode.TEXT),
+        )
+        val events = mutableListOf<Event>()
+        val job = launch { controller.events.take(1).toList(events) }
+        testScheduler.runCurrent()
+
+        controller.onIntent(Intent.TapTextAt(Offset(50f, 20f), tolerance = 8f))
+        job.join()
+
+        assertEquals("t", assertIs<Event.TextEditRequested>(events.single()).id)
+        assertEquals(setOf("t"), controller.state.value.selectedIds)
+        assertEquals(1, controller.state.value.elements.size)
+    }
+
+    @Test
+    fun textTapOnEmptyCanvasInsertsWithoutEvent() = runTest(StandardTestDispatcher()) {
+        val controller = DrawBoxController(
+            Reducer(UseCase()),
+            State(mode = Mode.TEXT),
+        )
+        val events = mutableListOf<Event>()
+        val job = launch { controller.events.collect { events += it } }
+        testScheduler.runCurrent()
+
+        controller.onIntent(Intent.TapTextAt(Offset(500f, 500f), tolerance = 8f))
+        testScheduler.runCurrent()
+        job.cancel()
+
+        assertTrue(events.isEmpty(), "an insert opens the editor via state, not an event")
+        assertIs<Element.Text>(controller.state.value.elements.single())
+        assertEquals(1, controller.state.value.history.size)
     }
 
     // ===== Persistence =====

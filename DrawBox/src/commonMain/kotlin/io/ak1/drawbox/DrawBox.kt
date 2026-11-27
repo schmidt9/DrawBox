@@ -618,19 +618,13 @@ fun DrawBox(
                                 latestOnIntent(Intent.EndErase)
                             }
                             Mode.TEXT -> {
-                                // Drop an empty Text element at the tap, using
-                                // the State defaults the user pre-configured via
-                                // the ContextBar before tapping. Matches the
-                                // shape-mode pattern where stroke/fill/etc. are
-                                // pre-chosen before drawing.
-                                latestOnIntent(Intent.InsertText(
-                                    text = "",
-                                    position = world,
-                                    fontSize = s.currentItemFontSize,
-                                    fontFamilyKey = s.currentItemFontFamilyKey,
-                                    alignment = s.currentItemTextAlignment,
-                                    color = s.strokeColor,
-                                ))
+                                // A tap on an existing top-level text edits it
+                                // instead. On a miss, insert an empty Text at
+                                // the tap using the State defaults the user
+                                // pre-configured via the ContextBar. The
+                                // edit-or-insert decision lives in the reducer
+                                // (TapTextAt).
+                                latestOnIntent(Intent.TapTextAt(world, tol))
                             }
                             Mode.POLYGON -> {
                                 if (s.activePolygonId == null) {
@@ -1064,9 +1058,9 @@ fun DrawBox(
                     // empty and let staticRefsMatch handle the cache rebuild
                     // when the element list shrinks.
                     Mode.ERASER -> emptySet()
-                    // Text insertion is single-step (tap → InsertText with an
-                    // empty content), so there's no "drag-being-mutated"
-                    // element to mark active. The sample app's modal editor
+                    // A TEXT-mode tap is single-step: TapTextAt either edits an
+                    // existing text or inserts an empty one, so there's no
+                    // "drag-being-mutated" element to mark active. The editor
                     // dispatches the eventual UpdateText separately.
                     Mode.TEXT -> emptySet()
                     // The polygon is appended to as the gesture advances; mark
