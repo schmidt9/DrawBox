@@ -10,13 +10,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.TextRun
@@ -24,11 +31,15 @@ import io.ak1.drawbox.domain.model.Viewport
 import io.ak1.drawbox.domain.model.blockStyle
 import io.ak1.drawbox.domain.model.remapTextRunsAfterEdit
 
+/** Quiet dotted outline of the editable text block; legible on light and dark. */
+private val EditingBorderColor = Color(0xB3888888)
+
 /**
  * Built-in inline text editor for [Element.Text]. Renders as the element
  * it edits — same font family, size, weight, style, alignment (per paragraph),
- * color, wrap width, and position — so the caret is the only visible "you are
- * editing" affordance. The element underneath is expected to be hidden by the
+ * color, wrap width, and position — plus a quiet dotted outline of the block
+ * (full wrap width, live content height) so the editable area is visible. The
+ * element underneath is expected to be hidden by the
  * host via [io.ak1.drawbox.DrawBox]'s `hiddenElementIds` parameter to avoid
  * ghosting.
  *
@@ -90,6 +101,8 @@ import io.ak1.drawbox.domain.model.remapTextRunsAfterEdit
  * @param runs the host-owned inline style overrides for [value]'s text.
  * @param focusRequester optional host-owned requester so a toolbar can
  *   re-focus the field after applying a style; created per element if null.
+ * @param showEditingBorder draws the dotted outline of the editable block;
+ *   hosts that provide their own chrome can turn it off.
  * @param onValueChange fires on every edit with the new (spanless) value; the
  *   host must remap its run model and rebuild [value].
  * @param onTextLayout reports the field's real layout (heights for keyboard
@@ -113,6 +126,7 @@ fun InlineTextEditor(
     value: TextFieldValue,
     runs: List<TextRun> = element.runs,
     focusRequester: FocusRequester? = null,
+    showEditingBorder: Boolean = true,
     onValueChange: (TextFieldValue) -> Unit,
     onTextLayout: (TextLayoutResult) -> Unit = {},
 ) {
@@ -159,7 +173,27 @@ fun InlineTextEditor(
                 IntOffset(screenTopLeft.x.toInt(), screenTopLeft.y.toInt())
             }
             .width(widthDp)
-            .focusRequester(requester),
+            .focusRequester(requester)
+            // Dotted outline of the editable text block (full wrap-box width,
+            // live content height) so the user can see the box they are
+            // editing. Screen-space chrome: constant dp at any zoom.
+            .drawWithContent {
+                drawContent()
+                if (showEditingBorder) {
+                    val stroke = 1.dp.toPx()
+                    val dash = 4.dp.toPx()
+                    val padding = 3.dp.toPx()
+                    drawRect(
+                        color = EditingBorderColor,
+                        topLeft = Offset(-padding, -padding),
+                        size = Size(size.width + padding * 2, size.height + padding * 2),
+                        style = Stroke(
+                            width = stroke,
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(dash, dash)),
+                        ),
+                    )
+                }
+            },
     )
 }
 

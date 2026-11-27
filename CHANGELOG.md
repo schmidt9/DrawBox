@@ -34,7 +34,9 @@ The `2.0.x` line is the Kotlin Multiplatform rewrite. The `1.x` line was an Andr
   `SetSelectedTextBold/Italic`) clear that property's overrides so the block
   becomes uniform, and `SetTextBold/Italic` + `InsertText(bold, italic)` carry the
   tool defaults. `InlineTextEditor` gains a `TextFieldValue` + runs overload with
-  `onTextLayout`; the `String` overload remains for existing hosts. Document
+  `onTextLayout`; the `String` overload remains for existing hosts. It also draws
+  a dotted outline of the editable block (full wrap width, live content height;
+  `showEditingBorder = false` opts out). Document
   format version 4 writes optional `italic`/`runs` (older files load as uniform
   text).
 
