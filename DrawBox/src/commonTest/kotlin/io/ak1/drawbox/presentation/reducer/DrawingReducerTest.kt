@@ -4,6 +4,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.Intent
+import io.ak1.drawbox.domain.model.Mode
 import io.ak1.drawbox.domain.model.State
 import io.ak1.drawbox.domain.model.StateSnapshot
 import io.ak1.drawbox.domain.model.ShapeType
@@ -62,6 +63,28 @@ class DrawingReducerTest {
 
         assertEquals(1, newState.elements.size)
         assertTrue(newState.elements[0] is Element.Shape)
+    }
+
+    @Test
+    fun testDiscardNewShapeRemovesElementAndUndoSnapshot() {
+        val inserted = reducer.reduce(
+            State(mode = Mode.RECTANGLE),
+            Intent.InsertNewShape(ShapeType.RECTANGLE, Offset(10f, 10f)),
+        )
+        val id = inserted.elements.single().id
+        assertEquals(1, inserted.history.size)
+
+        val out = reducer.reduce(inserted, Intent.DiscardNewShape(id))
+
+        assertTrue(out.elements.isEmpty())
+        assertTrue(out.history.isEmpty())
+        assertTrue(out.selectedIds.isEmpty())
+    }
+
+    @Test
+    fun testDiscardNewShapeWithUnknownIdIsNoOp() {
+        val state = State(elements = listOf(createTestPath()))
+        assertEquals(state, reducer.reduce(state, Intent.DiscardNewShape("missing")))
     }
 
     @Test

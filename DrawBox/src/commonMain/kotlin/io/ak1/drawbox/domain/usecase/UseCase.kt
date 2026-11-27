@@ -634,40 +634,131 @@ class UseCase {
     fun deleteLayerElements(elements: List<Element>, layerId: String): List<Element> =
         elements.filterNot { it.layerId == layerId }
 
-    /** Promote selected elements to the top of the z-order. */
-    fun bringToFront(elements: List<Element>, ids: Set<String>): List<Element> {
+    /**
+     * Promote the selected direct children of [groupPath] to the top of that
+     * scope's z-order, preserving their relative order. Returns the original
+     * list instance when nothing moves. (The editor's buttons use the
+     * one-step [moveSelectionUp] instead; this remains for hosts that want a
+     * jump-to-end action.)
+     */
+    fun bringToFront(
+        elements: List<Element>,
+        groupPath: List<String>,
+        ids: Set<String>,
+    ): List<Element> = reorderScopeToEnd(elements, groupPath, ids, selectedFirst = false)
+
+    /** Push the selected elements to the bottom of the scope; see [bringToFront]. */
+    fun sendToBack(
+        elements: List<Element>,
+        groupPath: List<String>,
+        ids: Set<String>,
+    ): List<Element> = reorderScopeToEnd(elements, groupPath, ids, selectedFirst = true)
+
+    /**
+     * Move [ids] to one end of the scope at [groupPath]. Z-indices are
+     * renumbered to `0..n-1` so the result is stable. A selection that already
+     * occupies the target end yields the original list instance (no-op).
+     */
+    private fun reorderScopeToEnd(
+        elements: List<Element>,
+        groupPath: List<String>,
+        ids: Set<String>,
+        selectedFirst: Boolean,
+    ): List<Element> {
         if (ids.isEmpty()) return elements
-        val maxZ = elements.maxOfOrNull { it.zIndex } ?: 0
-        var next = maxZ + 1
-        return elements.map { el ->
-            if (el.id in ids) when (el) {
-                is Element.Path -> el.copy(zIndex = next++).touched()
-                is Element.Shape -> el.copy(zIndex = next++).touched()
-                is Element.Image -> el.copy(zIndex = next++).touched()
-                is Element.Text -> el.copy(zIndex = next++).touched()
-                is Element.Group -> el.copy(zIndex = next++).touched()
-            } else el
-        }
+        val ordered = elements.childrenAt(groupPath).sortedBy { it.zIndex }
+        val selected = ordered.filter { it.id in ids }
+        if (selected.isEmpty()) return elements
+        val rest = ordered.filter { it.id !in ids }
+        if (rest.isEmpty()) return elements
+        val reordered = if (selectedFirst) selected + rest else rest + selected
+        if (reordered.map { it.id } == ordered.map { it.id }) return elements
+        return elements.replaceScopeChildren(
+            groupPath,
+            reordered.mapIndexed { index, element ->
+                val moved = element.withZIndex(index)
+                if (element.id in ids) moved.touched() else moved
+            },
+        )
     }
 
-    /** Push selected elements to the bottom of the z-order. */
-    fun sendToBack(elements: List<Element>, ids: Set<String>): List<Element> {
+    /**
+     * Move the selected direct children of [groupPath] one step toward the top
+     * of that scope's z-order. Contiguous runs of selected siblings shift
+     * together above the sibling directly above the run and keep their relative
+     * order. Returns the original list instance when nothing moves (the
+     * selection already reaches the top), so callers can skip an undo snapshot.
+     */
+    fun moveSelectionUp(
+        elements: List<Element>,
+        groupPath: List<String>,
+        ids: Set<String>,
+    ): List<Element> = reorderScopeStep(elements, groupPath, ids, up = true)
+
+    /** Move the selected elements one z-order step down; see [moveSelectionUp]. */
+    fun moveSelectionDown(
+        elements: List<Element>,
+        groupPath: List<String>,
+        ids: Set<String>,
+    ): List<Element> = reorderScopeStep(elements, groupPath, ids, up = false)
+
+    /**
+     * Shift every contiguous run of selected children at [groupPath] one slot
+     * toward one end of that scope, preserving order inside each run. Z-indices
+     * are renumbered to `0..n-1` so the result is stable; an unchanged order
+     * yields the original list instance (no-op).
+     */
+    private fun reorderScopeStep(
+        elements: List<Element>,
+        groupPath: List<String>,
+        ids: Set<String>,
+        up: Boolean,
+    ): List<Element> {
         if (ids.isEmpty()) return elements
-        val minZ = elements.minOfOrNull { it.zIndex } ?: 0
-        var next = minZ - 1
-        // Walk in current draw order so relative order among selected is preserved.
-        val orderedSelected = elements.filter { it.id in ids }.map { it.id }
-        val assignments = orderedSelected.reversed().associateWith { next-- }
-        return elements.map { el ->
-            val newZ = assignments[el.id]
-            if (newZ != null) when (el) {
-                is Element.Path -> el.copy(zIndex = newZ).touched()
-                is Element.Shape -> el.copy(zIndex = newZ).touched()
-                is Element.Image -> el.copy(zIndex = newZ).touched()
-                is Element.Text -> el.copy(zIndex = newZ).touched()
-                is Element.Group -> el.copy(zIndex = newZ).touched()
-            } else el
+        val ordered = elements.childrenAt(groupPath).sortedBy { it.zIndex }
+        if (ordered.none { it.id in ids } || ordered.all { it.id in ids }) return elements
+        val entries = ordered.map { it to (it.id in ids) }.toMutableList()
+
+        if (up) {
+            // Walk runs from the top so a moved run never meets one below it.
+            var index = entries.lastIndex
+            while (index >= 0) {
+                if (!entries[index].second) {
+                    index--
+                    continue
+                }
+                var start = index
+                while (start > 0 && entries[start - 1].second) start--
+                if (index < entries.lastIndex) {
+                    entries.add(start, entries.removeAt(index + 1))
+                }
+                index = start - 1
+            }
+        } else {
+            var index = 0
+            while (index <= entries.lastIndex) {
+                if (!entries[index].second) {
+                    index++
+                    continue
+                }
+                var end = index
+                while (end < entries.lastIndex && entries[end + 1].second) end++
+                if (index > 0) {
+                    entries.add(end, entries.removeAt(index - 1))
+                }
+                index = end + 1
+            }
         }
+
+        val reordered = entries.map { it.first }
+        if (reordered.map { it.id } == ordered.map { it.id }) return elements
+        return elements.replaceScopeChildren(
+            groupPath,
+            reordered.mapIndexed { index, element ->
+                val moved = element.withZIndex(index)
+                if (element.id in ids) moved.touched() else moved
+            },
+        )
     }
 
     /** Recolor every selected element's stroke. */

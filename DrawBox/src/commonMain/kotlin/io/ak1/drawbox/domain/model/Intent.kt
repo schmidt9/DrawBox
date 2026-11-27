@@ -209,6 +209,13 @@ sealed class Intent {
      */
     data class UpdateLatestShape(val newPoint: Offset) : Intent()
 
+    /**
+     * Remove a just-drawn shape that never reached a usable size (a click or a
+     * jittery press in a shape mode). Also drops the snapshot
+     * [InsertNewShape] pushed, so the empty gesture leaves no undo entry.
+     */
+    data class DiscardNewShape(val id: String) : Intent()
+
     // ==================== Polygon Operations ====================
 
     /**
@@ -473,11 +480,26 @@ sealed class Intent {
     /** Change the world-space eraser radius used by [Mode.ERASER]. */
     data class SetEraserSize(val size: Float) : Intent()
 
-    /** Move selected elements to the top of the z-order. Snapshots history. */
+    /**
+     * Move the selected direct children of the current group scope to the top
+     * of the z-order (a jump, unlike [MoveSelectionUp]). Snapshots history.
+     */
     data object BringSelectionToFront : Intent()
 
-    /** Move selected elements to the bottom of the z-order. Snapshots history. */
+    /** Move the selected elements to the bottom of the z-order; see [BringSelectionToFront]. */
     data object SendSelectionToBack : Intent()
+
+    /**
+     * Move the selected direct children of the current group scope one step
+     * toward the top of the z-order. Contiguous runs of selected siblings
+     * shift together and keep their relative order; the operand never jumps
+     * to the top. Snapshots history; a selection already at the top is a no-op
+     * that snapshots nothing.
+     */
+    data object MoveSelectionUp : Intent()
+
+    /** Move the selected elements one z-order step down; see [MoveSelectionUp]. */
+    data object MoveSelectionDown : Intent()
 
     // ==================== Camera / Viewport Operations ====================
 

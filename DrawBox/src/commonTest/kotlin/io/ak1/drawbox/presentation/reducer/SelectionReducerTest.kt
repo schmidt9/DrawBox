@@ -12,6 +12,7 @@ import io.ak1.drawbox.domain.model.StrokeStyle
 import io.ak1.drawbox.domain.usecase.UseCase
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class SelectionReducerTest {
@@ -132,14 +133,96 @@ class SelectionReducerTest {
     }
 
     @Test
-    fun bringSelectionToFrontIncreasesZIndex() {
+    fun moveSelectionUpSwapsWithTheSiblingAbove() {
         val a = rect("a", 0f, 0f, 10f, 10f, z = 0)
-        val b = rect("b", 0f, 0f, 10f, 10f, z = 5)
+        val b = rect("b", 0f, 0f, 10f, 10f, z = 1)
+        val c = rect("c", 0f, 0f, 10f, 10f, z = 2)
+        val state = State(
+            elements = listOf(a, b, c),
+            mode = Mode.SELECT,
+            selectedIds = setOf("b"),
+        )
+        val out = reducer.reduce(state, Intent.MoveSelectionUp)
+        assertEquals(
+            listOf("a", "c", "b"),
+            out.elements.sortedBy { it.zIndex }.map { it.id },
+        )
+    }
+
+    @Test
+    fun moveSelectionUpWhenAlreadyOnTopIsNoOp() {
+        val a = rect("a", 0f, 0f, 10f, 10f, z = 0)
+        val b = rect("b", 0f, 0f, 10f, 10f, z = 1)
+        val state = State(elements = listOf(a, b), mode = Mode.SELECT, selectedIds = setOf("b"))
+        val out = reducer.reduce(state, Intent.MoveSelectionUp)
+        assertSame(state, out)
+        assertTrue(out.history.isEmpty())
+    }
+
+    @Test
+    fun moveSelectionDownWhenAlreadyAtBottomIsNoOp() {
+        val a = rect("a", 0f, 0f, 10f, 10f, z = 0)
+        val b = rect("b", 0f, 0f, 10f, 10f, z = 1)
         val state = State(elements = listOf(a, b), mode = Mode.SELECT, selectedIds = setOf("a"))
-        val out = reducer.reduce(state, Intent.BringSelectionToFront)
-        val newA = out.elements.first { it.id == "a" }
-        val newB = out.elements.first { it.id == "b" }
-        assertTrue(newA.zIndex > newB.zIndex)
+        val out = reducer.reduce(state, Intent.MoveSelectionDown)
+        assertSame(state, out)
+        assertTrue(out.history.isEmpty())
+    }
+
+    @Test
+    fun moveSelectionUpShiftsASelectedRunAsABlock() {
+        val a = rect("a", 0f, 0f, 10f, 10f, z = 0)
+        val b = rect("b", 0f, 0f, 10f, 10f, z = 1)
+        val c = rect("c", 0f, 0f, 10f, 10f, z = 2)
+        val d = rect("d", 0f, 0f, 10f, 10f, z = 3)
+        val state = State(
+            elements = listOf(a, b, c, d),
+            mode = Mode.SELECT,
+            selectedIds = setOf("b", "c"),
+        )
+        val out = reducer.reduce(state, Intent.MoveSelectionUp)
+        assertEquals(
+            listOf("a", "d", "b", "c"),
+            out.elements.sortedBy { it.zIndex }.map { it.id },
+        )
+    }
+
+    @Test
+    fun moveSelectionDownShiftsEverySelectedRunOneStep() {
+        val a = rect("a", 0f, 0f, 10f, 10f, z = 0)
+        val b = rect("b", 0f, 0f, 10f, 10f, z = 1)
+        val c = rect("c", 0f, 0f, 10f, 10f, z = 2)
+        val d = rect("d", 0f, 0f, 10f, 10f, z = 3)
+        val e = rect("e", 0f, 0f, 10f, 10f, z = 4)
+        val state = State(
+            elements = listOf(a, b, c, d, e),
+            mode = Mode.SELECT,
+            selectedIds = setOf("b", "d"),
+        )
+        val out = reducer.reduce(state, Intent.MoveSelectionDown)
+        assertEquals(
+            listOf("b", "a", "d", "c", "e"),
+            out.elements.sortedBy { it.zIndex }.map { it.id },
+        )
+    }
+
+    @Test
+    fun moveSelectionUpReordersEnteredGroupChildren() {
+        val a = rect("a", 0f, 0f, 10f, 10f, z = 0)
+        val b = rect("b", 0f, 0f, 10f, 10f, z = 1)
+        val group = Element.Group(id = "g", children = listOf(a, b))
+        val state = State(
+            elements = listOf(group),
+            mode = Mode.SELECT,
+            selectedIds = setOf("a"),
+            groupPath = listOf("g"),
+        )
+        val out = reducer.reduce(state, Intent.MoveSelectionUp)
+        val children = (out.elements.single() as Element.Group)
+            .children
+            .sortedBy { it.zIndex }
+            .map { it.id }
+        assertEquals(listOf("b", "a"), children)
     }
 
     @Test

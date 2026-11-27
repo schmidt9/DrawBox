@@ -83,8 +83,9 @@ internal fun staticRefsMatch(
  * Returns the list sorted by [Element.zIndex], or the original instance when it
  * is already in ascending zIndex order. Insertion via `addElement` keeps the
  * list sorted by construction, so the common case is the O(N) scan with zero
- * allocations; only `bringToFront`/`sendToBack` or out-of-order undo state
- * triggers the actual sort.
+ * allocations; only the z-order reorder intents (`bringToFront`/`sendToBack`,
+ * `moveSelectionUp`/`moveSelectionDown`) or out-of-order undo state trigger
+ * the actual sort.
  */
 internal fun List<Element>.sortedByZIndexIfNeeded(): List<Element> {
     var prev = Int.MIN_VALUE

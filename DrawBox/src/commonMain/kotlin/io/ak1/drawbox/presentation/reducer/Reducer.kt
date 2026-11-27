@@ -157,6 +157,17 @@ class Reducer(
         is Intent.UpdateLatestShape -> state.copy(
             elements = useCase.updateLatestShape(intent.newPoint, state.elements),
         )
+        is Intent.DiscardNewShape -> {
+            if (state.elements.none { it.id == intent.id }) state
+            else state.copy(
+                elements = useCase.deleteElement(intent.id, state.elements),
+                selectedIds = state.selectedIds - intent.id,
+                activePolygonId = state.activePolygonId?.takeIf { it != intent.id },
+                // The gesture produced nothing, so drop the snapshot
+                // InsertNewShape pushed instead of leaving a no-op undo step.
+                history = state.history.dropLast(1),
+            )
+        }
         is Intent.StartPolygon -> {
             val polygon = useCase.insertNewPolygon(
                 intent.offset,
@@ -534,15 +545,51 @@ class Reducer(
 
         is Intent.BringSelectionToFront -> {
             if (state.selectedIds.isEmpty()) state
-            else state.snapshot().copy(
-                elements = useCase.bringToFront(state.elements, state.selectedIds),
-            )
+            else {
+                val next = useCase.bringToFront(
+                    state.elements,
+                    state.groupPath,
+                    state.selectedIds,
+                )
+                if (next === state.elements) state
+                else state.snapshot().copy(elements = next)
+            }
         }
         is Intent.SendSelectionToBack -> {
             if (state.selectedIds.isEmpty()) state
-            else state.snapshot().copy(
-                elements = useCase.sendToBack(state.elements, state.selectedIds),
-            )
+            else {
+                val next = useCase.sendToBack(
+                    state.elements,
+                    state.groupPath,
+                    state.selectedIds,
+                )
+                if (next === state.elements) state
+                else state.snapshot().copy(elements = next)
+            }
+        }
+        is Intent.MoveSelectionUp -> {
+            if (state.selectedIds.isEmpty()) state
+            else {
+                val next = useCase.moveSelectionUp(
+                    state.elements,
+                    state.groupPath,
+                    state.selectedIds,
+                )
+                if (next === state.elements) state
+                else state.snapshot().copy(elements = next)
+            }
+        }
+        is Intent.MoveSelectionDown -> {
+            if (state.selectedIds.isEmpty()) state
+            else {
+                val next = useCase.moveSelectionDown(
+                    state.elements,
+                    state.groupPath,
+                    state.selectedIds,
+                )
+                if (next === state.elements) state
+                else state.snapshot().copy(elements = next)
+            }
         }
 
         // Camera / Viewport

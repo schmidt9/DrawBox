@@ -314,6 +314,10 @@ fun DrawBox(
     val handleHitPx = with(density) { 16.dp.toPx() }
     val rotationOffsetPx = with(density) { 28.dp.toPx() }
     val pickTolerancePx = with(density) { 12.dp.toPx() }
+    // A shape dragged smaller than this on screen is discarded on release; a
+    // tap or a click with a couple of pixels of jitter otherwise leaves an
+    // invisible element behind.
+    val minDrawnShapeSpanPx = with(density) { 4.dp.toPx() }
     // Screen-space alignment snap distance. Divided by the viewport scale per
     // drag tick so the feel stays constant at any zoom.
     val alignmentSnapThresholdPx = with(density) { 6.dp.toPx() }
@@ -635,9 +639,10 @@ fun DrawBox(
                                     latestOnIntent(Intent.AppendPolygonPoint(world))
                                 }
                             }
-                            else -> modeShapeType(s.effectiveMode)?.let { st ->
-                                latestOnIntent(Intent.InsertNewShape(st, world))
-                                latestOnIntent(Intent.UpdateLatestShape(world))
+                            else -> {
+                                // Shape modes draw from a drag. A plain tap
+                                // must not insert a zero-size element; a tiny
+                                // drag is discarded on drag end.
                             }
                         }
                     },
@@ -793,10 +798,22 @@ fun DrawBox(
                         // over a shape so the arrow becomes a connector.
                         val justDrawn = s.elements.lastOrNull()
                         if (justDrawn is Element.Shape && justDrawn.shapeType == ShapeType.ARROW) {
-                            latestOnIntent(Intent.FinalizeArrowBindings(justDrawn.id))
+                            if (justDrawn.drawnSpanPx(s.viewport.scale) < minDrawnShapeSpanPx) {
+                                latestOnIntent(Intent.DiscardNewShape(justDrawn.id))
+                            } else {
+                                latestOnIntent(Intent.FinalizeArrowBindings(justDrawn.id))
+                            }
                         }
                     } else if (s.mode == Mode.ERASER) {
                         latestOnIntent(Intent.EndErase)
+                    } else if (modeShapeType(s.effectiveMode) != null) {
+                        // A press that never grew into a usable shape (a click
+                        // with a few pixels of jitter) leaves nothing behind
+                        // instead of an invisible element.
+                        val drawn = s.elements.lastOrNull()
+                        if (drawn != null && drawn.drawnSpanPx(s.viewport.scale) < minDrawnShapeSpanPx) {
+                            latestOnIntent(Intent.DiscardNewShape(drawn.id))
+                        }
                     }
                     latestOnIntent(Intent.EndTransform)
                     interaction = null
@@ -816,6 +833,16 @@ fun DrawBox(
                     }
                     if (latestState.mode == Mode.ERASER) {
                         latestOnIntent(Intent.EndErase)
+                    }
+                    // A cancelled shape gesture can leave the same invisible
+                    // sliver a release would, so apply the same guard.
+                    if (modeShapeType(latestState.effectiveMode) != null) {
+                        val drawn = latestState.elements.lastOrNull()
+                        if (drawn != null &&
+                            drawn.drawnSpanPx(latestState.viewport.scale) < minDrawnShapeSpanPx
+                        ) {
+                            latestOnIntent(Intent.DiscardNewShape(drawn.id))
+                        }
                     }
                     latestOnIntent(Intent.EndTransform)
                     interaction = null
@@ -1271,6 +1298,18 @@ private fun modeShapeType(mode: Mode): ShapeType? = when (mode) {
     Mode.ARROW -> ShapeType.ARROW
     Mode.LINE -> ShapeType.LINE
     Mode.PEN, Mode.SELECT, Mode.PAN, Mode.ERASER, Mode.TEXT, Mode.POLYGON -> null
+}
+
+/**
+ * Longest axis of the element's world bounds in screen pixels. Used to reject
+ * shapes a gesture never really drew: a click or a jittery drag leaves a
+ * near-zero-size element that is invisible on the canvas but still hit-testable
+ * and selectable. A line's AABB is fine here — one axis may be zero, but a line
+ * worth keeping always has a long other axis.
+ */
+private fun Element.drawnSpanPx(viewportScale: Float): Float {
+    val bounds = bounds()
+    return maxOf(bounds.width, bounds.height) * viewportScale
 }
 
 /**

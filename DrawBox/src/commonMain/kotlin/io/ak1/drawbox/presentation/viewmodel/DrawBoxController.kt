@@ -437,6 +437,12 @@ class DrawBoxController(
     /** Send selected elements to the bottom of the z-order. */
     fun sendSelectionToBack() = onIntent(Intent.SendSelectionToBack)
 
+    /** Move selected elements one step toward the top of the z-order. */
+    fun moveSelectionUp() = onIntent(Intent.MoveSelectionUp)
+
+    /** Move selected elements one step toward the bottom of the z-order. */
+    fun moveSelectionDown() = onIntent(Intent.MoveSelectionDown)
+
     // ==================== Layer Methods ====================
 
     fun addLayer(id: String, name: String) = onIntent(Intent.AddLayer(id, name))
