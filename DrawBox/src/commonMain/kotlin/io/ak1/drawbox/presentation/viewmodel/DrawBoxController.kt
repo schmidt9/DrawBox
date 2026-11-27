@@ -316,13 +316,27 @@ class DrawBoxController(
         alignment: io.ak1.drawbox.domain.model.TextAlignment =
             io.ak1.drawbox.domain.model.TextAlignment.LEFT,
         color: Color = Color.Black,
+        bold: Boolean = false,
+        italic: Boolean = false,
     ) = onIntent(
-        Intent.InsertText(text, position, fontSize, fontFamilyKey, alignment, color),
+        Intent.InsertText(
+            text, position, fontSize, fontFamilyKey, alignment, color, bold, italic,
+        ),
     )
 
     /** Replace the text content of an existing [io.ak1.drawbox.domain.model.Element.Text]. */
     fun updateText(id: String, text: String) =
         onIntent(Intent.UpdateText(id, text))
+
+    /**
+     * Commit rich text: replace both the content and its inline run overrides
+     * (one history step). Runs are normalized against the new text.
+     */
+    fun updateRichText(
+        id: String,
+        text: String,
+        runs: List<io.ak1.drawbox.domain.model.TextRun>,
+    ) = onIntent(Intent.UpdateRichText(id, text, runs))
 
     /**
      * Register a custom font family the SDK can resolve by [key] when
@@ -351,6 +365,14 @@ class DrawBoxController(
     fun setSelectionFontFamily(fontFamilyKey: String) =
         onIntent(Intent.SetSelectedFontFamily(fontFamilyKey))
 
+    /** Set bold on every selected text element (makes the block uniform). */
+    fun setSelectionTextBold(bold: Boolean) =
+        onIntent(Intent.SetSelectedTextBold(bold))
+
+    /** Set italic on every selected text element (makes the block uniform). */
+    fun setSelectionTextItalic(italic: Boolean) =
+        onIntent(Intent.SetSelectedTextItalic(italic))
+
     /** Default font size for the next [Intent.InsertText]. */
     fun setFontSize(size: Float) = onIntent(Intent.SetFontSize(size))
 
@@ -360,6 +382,12 @@ class DrawBoxController(
     /** Default alignment for the next [Intent.InsertText]. */
     fun setTextAlignment(alignment: io.ak1.drawbox.domain.model.TextAlignment) =
         onIntent(Intent.SetTextAlignment(alignment))
+
+    /** Default bold for the next [Intent.InsertText]. */
+    fun setTextBold(bold: Boolean) = onIntent(Intent.SetTextBold(bold))
+
+    /** Default italic for the next [Intent.InsertText]. */
+    fun setTextItalic(italic: Boolean) = onIntent(Intent.SetTextItalic(italic))
 
     /** Undo the last drawing action */
     fun undo() = onIntent(Intent.Undo)

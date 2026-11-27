@@ -143,6 +143,23 @@ data class ShapeGradientDto(
     val stops: List<GradientStopDto>,
 )
 
+/**
+ * Wire format for one [TextRun]: a sparse style override over a substring.
+ * Null fields inherit the block-level text style. Absent on legacy documents.
+ */
+@kotlinx.serialization.Serializable
+data class TextRunDto(
+    val start: Int,
+    val end: Int,
+    val fontFamilyKey: String? = null,
+    val fontSize: Float? = null,
+    /** Explicit `false` overrides a bold base; null inherits. */
+    val bold: Boolean? = null,
+    val italic: Boolean? = null,
+    /** `LEFT`, `CENTER`, or `RIGHT`; applies to the whole paragraph. */
+    val alignment: String? = null,
+)
+
 data class ElementDto(
     val id: String,
     val type: String,
@@ -209,6 +226,10 @@ data class ElementDto(
     val wrapWidth: Float? = null,
     /** Bold text flag; absent/null means normal weight. */
     val bold: Boolean? = null,
+    /** Italic text flag; absent/null means upright. */
+    val italic: Boolean? = null,
+    /** Inline style overrides over substrings; absent for uniform text. */
+    val runs: List<TextRunDto>? = null,
     /**
      * Nested children of a `"Group"` element, in the group's local coordinate
      * frame. Null/absent on leaf elements and in legacy files.
@@ -281,6 +302,18 @@ fun Element.toDto(): ElementDto = when (this) {
         textTopLeft = topLeft.toJsonString(),
         wrapWidth = wrapWidth,
         bold = true.takeIf { bold },
+        italic = true.takeIf { italic },
+        runs = runs.map {
+            TextRunDto(
+                start = it.start,
+                end = it.end,
+                fontFamilyKey = it.fontFamilyKey,
+                fontSize = it.fontSize,
+                bold = it.bold,
+                italic = it.italic,
+                alignment = it.alignment?.name,
+            )
+        }.takeIf { it.isNotEmpty() },
         name = name.takeIf { it.isNotBlank() },
         layerId = layerId,
     )
@@ -359,6 +392,7 @@ fun ElementDto.toElement(): Element = when (type) {
         layerId = layerId,
     )
     "Text" -> {
+        val resolvedText = text ?: ""
         val resolvedFontSize = fontSize ?: 24f
         // Prefer the dedicated `textTopLeft` / `wrapWidth` fields; fall back
         // to the first/last of `points` for any (in-development) JSON that
@@ -370,17 +404,24 @@ fun ElementDto.toElement(): Element = when (type) {
             val pts = points.map { it.toOffset() }
             if (pts.size >= 2) pts.last().x - pts.first().x else 240f
         }
-        Element.Text(
-            id = id,
-            text = text ?: "",
+        val baseStyle = TextBlockStyle(
             fontFamilyKey = fontFamilyKey ?: io.ak1.drawbox.domain.model.DEFAULT_FONT_FAMILY_KEY,
             fontSize = resolvedFontSize,
-            color = strokeColor.toColor(),
+            bold = bold == true,
+            italic = italic == true,
             alignment = when (alignment) {
                 "CENTER" -> io.ak1.drawbox.domain.model.TextAlignment.CENTER
                 "RIGHT" -> io.ak1.drawbox.domain.model.TextAlignment.RIGHT
                 else -> io.ak1.drawbox.domain.model.TextAlignment.LEFT
             },
+        )
+        Element.Text(
+            id = id,
+            text = resolvedText,
+            fontFamilyKey = baseStyle.fontFamilyKey,
+            fontSize = resolvedFontSize,
+            color = strokeColor.toColor(),
+            alignment = baseStyle.alignment,
             topLeft = resolvedTopLeft,
             wrapWidth = resolvedWrapWidth.coerceAtLeast(1f),
             // Single-line guess — the renderer's first layout pass dispatches
@@ -394,7 +435,13 @@ fun ElementDto.toElement(): Element = when (type) {
             modifiedAt = modifiedAt ?: createdAt ?: 0L,
             name = name ?: "",
             layerId = layerId,
-            bold = bold == true,
+            bold = baseStyle.bold,
+            italic = baseStyle.italic,
+            runs = normalizeTextRuns(
+                text = resolvedText,
+                runs = runs.orEmpty().mapNotNull { it.toTextRunOrNull() },
+                base = baseStyle,
+            ),
         )
     }
     "Shape" -> Element.Shape(
@@ -500,6 +547,10 @@ data class SerializableElement(
     val wrapWidth: Float? = null,
     /** Bold text flag; absent/null means normal weight. */
     val bold: Boolean? = null,
+    /** Italic text flag; absent/null means upright. */
+    val italic: Boolean? = null,
+    /** Inline style overrides over substrings; absent for uniform text. */
+    val runs: List<TextRunDto>? = null,
     val children: List<SerializableElement>? = null,
     /** Auto-assigned display name; absent in legacy files. */
     val name: String? = null,
@@ -569,6 +620,8 @@ private fun ElementDto.toSerializableElement(): SerializableElement = Serializab
     textTopLeft = textTopLeft,
     wrapWidth = wrapWidth,
     bold = bold,
+    italic = italic,
+    runs = runs,
     children = children?.map { it.toSerializableElement() },
     name = name,
     layerId = layerId,
@@ -606,10 +659,31 @@ private fun SerializableElement.toElementDto(): ElementDto = ElementDto(
     textTopLeft = textTopLeft,
     wrapWidth = wrapWidth,
     bold = bold,
+    italic = italic,
+    runs = runs,
     children = children?.map { it.toElementDto() },
     name = name,
     layerId = layerId,
 )
+
+/** Wire run → model run; unknown alignment strings inherit the block style. */
+private fun TextRunDto.toTextRunOrNull(): TextRun? {
+    if (end <= start) return null
+    return TextRun(
+        start = start,
+        end = end,
+        fontFamilyKey = fontFamilyKey?.takeIf { it.isNotBlank() },
+        fontSize = fontSize?.takeIf { it.isFinite() && it > 0f },
+        bold = bold,
+        italic = italic,
+        alignment = when (alignment) {
+            "LEFT" -> TextAlignment.LEFT
+            "CENTER" -> TextAlignment.CENTER
+            "RIGHT" -> TextAlignment.RIGHT
+            else -> null
+        },
+    )
+}
 
 object DrawingSerializer {
     private val json = Json {
@@ -704,8 +778,13 @@ private fun SerializablePage.toPagePayLoad(): PagePayLoad {
  * required).
  */
 object PagesDrawingSerializer {
-    /** Current document format version written as `version`. */
-    const val FORMAT_VERSION: Int = 3
+    /**
+     * Current document format version written as `version`. v4 adds the
+     * optional text `italic` flag and `runs` list; older documents load
+     * unchanged (uniform text) and older readers ignore the new fields (and
+     * drop them if they re-save).
+     */
+    const val FORMAT_VERSION: Int = 4
 
     private val json = Json {
         prettyPrint = true

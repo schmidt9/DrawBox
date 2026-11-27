@@ -3,10 +3,18 @@
 package io.ak1.drawbox.domain.usecase
 
 import androidx.compose.ui.graphics.Color
+import io.ak1.drawbox.domain.model.BuiltinFontFamilyKeys
 import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.ShapeType
 import io.ak1.drawbox.domain.model.StrokeStyle
+import io.ak1.drawbox.domain.model.TextAlignment
+import io.ak1.drawbox.domain.model.TextBlockStyle
+import io.ak1.drawbox.domain.model.TextRun
+import io.ak1.drawbox.domain.model.blockStyle
 import io.ak1.drawbox.domain.model.bounds
+import io.ak1.drawbox.domain.model.normalizeTextRuns
+import io.ak1.drawbox.domain.model.resolveStyleAt
+import io.ak1.drawbox.domain.model.textParagraphSpans
 import io.ak1.drawbox.domain.model.visualAabb
 import androidx.compose.ui.geometry.Offset
 import kotlin.io.encoding.Base64
@@ -446,23 +454,20 @@ object SvgExporter {
 
     private fun textToSvg(text: Element.Text): String {
         if (text.text.isEmpty()) return ""
+        return if (text.runs.isEmpty()) textToSvgUniform(text) else textToSvgRich(text)
+    }
+
+    private fun textToSvgUniform(text: Element.Text): String {
         val x = text.topLeft.x
         val y = text.topLeft.y
         val w = text.wrapWidth
         val h = text.measuredHeight
-        val anchor = when (text.alignment) {
-            io.ak1.drawbox.domain.model.TextAlignment.LEFT -> "start"
-            io.ak1.drawbox.domain.model.TextAlignment.CENTER -> "middle"
-            io.ak1.drawbox.domain.model.TextAlignment.RIGHT -> "end"
-        }
-        val anchorX = when (text.alignment) {
-            io.ak1.drawbox.domain.model.TextAlignment.LEFT -> x
-            io.ak1.drawbox.domain.model.TextAlignment.CENTER -> x + w * 0.5f
-            io.ak1.drawbox.domain.model.TextAlignment.RIGHT -> x + w
-        }
+        val anchor = text.alignment.toSvgAnchor()
+        val anchorX = text.alignment.anchorX(x, w)
         val color = colorToHex(text.color)
         val opacityAttr = if (text.opacity != 1f) """ opacity="${text.opacity}"""" else ""
         val weightAttr = if (text.bold) """ font-weight="bold"""" else ""
+        val styleAttr = if (text.italic) """ font-style="italic"""" else ""
         val transformAttr = if (text.rotation != 0f) {
             val cx = x + w * 0.5f
             val cy = y + h * 0.5f
@@ -478,8 +483,177 @@ object SvgExporter {
             val dy = if (i == 0) text.fontSize else lineHeight
             """<tspan x="$anchorX" dy="$dy">${escapeXml(line)}</tspan>"""
         }.joinToString("")
-        return """<text x="$anchorX" y="$y" font-family="${escapeXmlAttr(text.fontFamilyKey)}" font-size="${text.fontSize}" fill="$color"$weightAttr text-anchor="$anchor"$opacityAttr$transformAttr>$tspans</text>"""
+        return """<text x="$anchorX" y="$y" font-family="${escapeXmlAttr(text.fontFamilyKey)}" font-size="${text.fontSize}" fill="$color"$weightAttr$styleAttr text-anchor="$anchor"$opacityAttr$transformAttr>$tspans</text>"""
     }
+
+    /**
+     * Rich-text export: one `<text>` for the block, one `<tspan>` per visual
+     * line (alignment can differ per paragraph, so each line carries its own
+     * `x`/`text-anchor`), and nested `<tspan>`s inside a line wherever the run
+     * style differs from the block style. The wrap is the same per-character
+     * heuristic as [wrapTextForSvg], generalized to per-run sizes/families; it
+     * remains an approximation (JSON is lossless).
+     */
+    private fun textToSvgRich(text: Element.Text): String {
+        val base = text.blockStyle()
+        val runs: List<TextRun> = normalizeTextRuns(text.text, text.runs, base)
+        val x = text.topLeft.x
+        val y = text.topLeft.y
+        val w = text.wrapWidth
+        val h = text.measuredHeight
+        val color = colorToHex(text.color)
+        val opacityAttr = if (text.opacity != 1f) """ opacity="${text.opacity}"""" else ""
+        val baseAnchor = text.alignment.toSvgAnchor()
+        val baseAnchorX = text.alignment.anchorX(x, w)
+        val weightAttr = if (text.bold) """ font-weight="bold"""" else ""
+        val styleAttr = if (text.italic) """ font-style="italic"""" else ""
+        val transformAttr = if (text.rotation != 0f) {
+            val cx = x + w * 0.5f
+            val cy = y + h * 0.5f
+            """ transform="rotate(${text.rotation}, $cx, $cy)""""
+        } else ""
+
+        fun styleAt(index: Int): TextBlockStyle =
+            resolveStyleAt(text.text, runs, base, index.coerceIn(0, text.text.lastIndex.coerceAtMost(0)))
+
+        fun charWidth(index: Int): Float {
+            val style = styleAt(index)
+            return style.fontSize * style.fontFamilyKey.charWidthMultiplier()
+        }
+
+        val lines = wrapRichText(text.text, w) { charWidth(it) }
+        var previousFontSize = text.fontSize
+        val tspans = lines.mapIndexed { index, line ->
+            val lineFontSize = if (line.end > line.start) {
+                (line.start until line.end).maxOf { styleAt(it).fontSize }
+            } else {
+                previousFontSize
+            }
+            val dy = if (index == 0) lineFontSize else previousFontSize * 1.25f
+            previousFontSize = lineFontSize
+            val alignment = styleAt(line.start).alignment
+            val anchorX = alignment.anchorX(x, w)
+            val anchor = alignment.toSvgAnchor()
+            val content = if (line.end <= line.start) {
+                ""
+            } else {
+                richLineContent(text.text, runs, base, line.start, line.end)
+            }
+            """<tspan x="$anchorX" dy="$dy" text-anchor="$anchor">$content</tspan>"""
+        }.joinToString("")
+        return """<text x="$baseAnchorX" y="$y" font-family="${escapeXmlAttr(text.fontFamilyKey)}" font-size="${text.fontSize}" fill="$color"$weightAttr$styleAttr text-anchor="$baseAnchor"$opacityAttr$transformAttr>$tspans</text>"""
+    }
+
+    private data class RichLine(val start: Int, val end: Int)
+
+    /**
+     * Greedy wrap over paragraphs with per-character widths. Breaks at the
+     * last space when possible, otherwise mid-word, and keeps empty hard lines
+     * so `a\n\nb` keeps its blank line.
+     */
+    private fun wrapRichText(
+        text: String,
+        widthWorld: Float,
+        charWidth: (Int) -> Float,
+    ): List<RichLine> {
+        val out = mutableListOf<RichLine>()
+        for (paragraph in textParagraphSpans(text)) {
+            val hardEnd = if (paragraph.end > paragraph.start &&
+                text[paragraph.end - 1] == '\n'
+            ) {
+                paragraph.end - 1
+            } else {
+                paragraph.end
+            }
+            if (hardEnd == paragraph.start) {
+                out += RichLine(paragraph.start, paragraph.start)
+                continue
+            }
+            var lineStart = paragraph.start
+            var i = paragraph.start
+            var lastBreak = -1
+            var accumulated = 0f
+            while (i < hardEnd) {
+                val width = charWidth(i)
+                if (widthWorld > 0f && accumulated + width > widthWorld && i > lineStart) {
+                    val breakEnd = if (lastBreak > lineStart) lastBreak - 1 else i
+                    out += RichLine(lineStart, breakEnd.coerceAtLeast(lineStart + 1))
+                    lineStart = if (lastBreak > lineStart) lastBreak else i
+                    lastBreak = -1
+                    accumulated = charWidth(i)
+                    if (text[i] == ' ') lastBreak = i + 1
+                    i++
+                    continue
+                }
+                accumulated += width
+                if (text[i] == ' ') lastBreak = i + 1
+                i++
+            }
+            out += RichLine(lineStart, hardEnd)
+        }
+        return out
+    }
+
+    /**
+     * One line's SVG content: plain escaped text where the run style matches
+     * the block, nested `<tspan>`s carrying overrides where it differs.
+     * Explicit `false` over a bold/italic base emits `normal`.
+     */
+    private fun richLineContent(
+        text: String,
+        runs: List<TextRun>,
+        base: TextBlockStyle,
+        start: Int,
+        end: Int,
+    ): String {
+        val boundaries = sortedSetOf(start, end)
+        for (run in runs) {
+            if (run.end > start && run.start < end) {
+                boundaries += run.start.coerceIn(start, end)
+                boundaries += run.end.coerceIn(start, end)
+            }
+        }
+        val points = boundaries.toList()
+        val builder = StringBuilder()
+        for (i in 0 until points.size - 1) {
+            val a = points[i]
+            val b = points[i + 1]
+            if (b <= a) continue
+            val style = resolveStyleAt(text, runs, base, a)
+            val attrs = buildString {
+                if (style.fontFamilyKey != base.fontFamilyKey) {
+                    append(""" font-family="${escapeXmlAttr(style.fontFamilyKey)}"""")
+                }
+                if (style.fontSize != base.fontSize) {
+                    append(""" font-size="${style.fontSize}"""")
+                }
+                if (style.bold != base.bold) {
+                    append(if (style.bold) """ font-weight="bold"""" else """ font-weight="normal"""")
+                }
+                if (style.italic != base.italic) {
+                    append(if (style.italic) """ font-style="italic"""" else """ font-style="normal"""")
+                }
+            }
+            val chunk = escapeXml(text.substring(a, b))
+            if (attrs.isEmpty()) builder.append(chunk) else builder.append("<tspan$attrs>$chunk</tspan>")
+        }
+        return builder.toString()
+    }
+
+    private fun TextAlignment.toSvgAnchor(): String = when (this) {
+        TextAlignment.LEFT -> "start"
+        TextAlignment.CENTER -> "middle"
+        TextAlignment.RIGHT -> "end"
+    }
+
+    private fun TextAlignment.anchorX(x: Float, width: Float): Float = when (this) {
+        TextAlignment.LEFT -> x
+        TextAlignment.CENTER -> x + width * 0.5f
+        TextAlignment.RIGHT -> x + width
+    }
+
+    private fun String.charWidthMultiplier(): Float =
+        if (this == BuiltinFontFamilyKeys.MONO) 0.6f else 0.55f
 
     /**
      * Cheap line-wrap approximation for SVG export. Honors hard `\n` breaks;

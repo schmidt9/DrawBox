@@ -76,6 +76,8 @@ data class ToolSettings(
     val fontSize: Float,
     val fontFamilyKey: String,
     val textAlignment: TextAlignment,
+    val textBold: Boolean = false,
+    val textItalic: Boolean = false,
 )
 
 /** Modes that carry meaningful per-tool style. Utility modes are excluded. */
@@ -211,6 +213,10 @@ data class State(
      * [Intent.SetTextAlignment].
      */
     val currentItemTextAlignment: TextAlignment = TextAlignment.LEFT,
+    /** Default weight for new text elements; see [Intent.SetTextBold]. */
+    val currentItemTextBold: Boolean = false,
+    /** Default style for new text elements; see [Intent.SetTextItalic]. */
+    val currentItemTextItalic: Boolean = false,
     val opacity: Float = 1f,
     val bgColor: Color = Color.Black,
     val bgPattern: BackgroundPattern? = null,

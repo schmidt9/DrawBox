@@ -98,12 +98,19 @@ class Reducer(
                         fontFamilyKey = state.currentItemFontFamilyKey,
                         alignment = state.currentItemTextAlignment,
                         color = state.strokeColor,
+                        bold = state.currentItemTextBold,
+                        italic = state.currentItemTextItalic,
                     ),
                 ).copy(selectedIds = emptySet())
             }
         }
         is Intent.UpdateText -> state.snapshot().copy(
             elements = useCase.updateText(state.elements, intent.id, intent.text),
+        )
+        is Intent.UpdateRichText -> state.snapshot().copy(
+            elements = useCase.updateRichText(
+                state.elements, intent.id, intent.text, intent.runs,
+            ),
         )
         is Intent.SetSelectedFontSize -> {
             if (state.selectedIds.isEmpty()) state
@@ -126,6 +133,22 @@ class Reducer(
             else state.snapshot().copy(
                 elements = useCase.setSelectedFontFamily(
                     state.elements, state.selectedIds, intent.fontFamilyKey,
+                ),
+            )
+        }
+        is Intent.SetSelectedTextBold -> {
+            if (state.selectedIds.isEmpty()) state
+            else state.snapshot().copy(
+                elements = useCase.setSelectedTextBold(
+                    state.elements, state.selectedIds, intent.bold,
+                ),
+            )
+        }
+        is Intent.SetSelectedTextItalic -> {
+            if (state.selectedIds.isEmpty()) state
+            else state.snapshot().copy(
+                elements = useCase.setSelectedTextItalic(
+                    state.elements, state.selectedIds, intent.italic,
                 ),
             )
         }
@@ -241,6 +264,8 @@ class Reducer(
         is Intent.SetFontSize -> state.copy(currentItemFontSize = intent.size)
         is Intent.SetFontFamily -> state.copy(currentItemFontFamilyKey = intent.fontFamilyKey)
         is Intent.SetTextAlignment -> state.copy(currentItemTextAlignment = intent.alignment)
+        is Intent.SetTextBold -> state.copy(currentItemTextBold = intent.bold)
+        is Intent.SetTextItalic -> state.copy(currentItemTextItalic = intent.italic)
         is Intent.SetOpacity -> state.copy(opacity = intent.opacity)
         is Intent.SetBgColor -> state.copy(bgColor = intent.bgColor)
         is Intent.SetBackgroundPattern -> state.copy(bgPattern = intent.pattern)
@@ -260,6 +285,8 @@ class Reducer(
                 fontSize = state.currentItemFontSize,
                 fontFamilyKey = state.currentItemFontFamilyKey,
                 textAlignment = state.currentItemTextAlignment,
+                textBold = state.currentItemTextBold,
+                textItalic = state.currentItemTextItalic,
             )
             val nextMemory = if (outgoingMode.persistsSettings())
                 state.toolMemory + (outgoingMode to snapshot)
@@ -293,6 +320,8 @@ class Reducer(
                 currentItemFontSize = restored?.fontSize ?: state.currentItemFontSize,
                 currentItemFontFamilyKey = restored?.fontFamilyKey ?: state.currentItemFontFamilyKey,
                 currentItemTextAlignment = restored?.textAlignment ?: state.currentItemTextAlignment,
+                currentItemTextBold = restored?.textBold ?: state.currentItemTextBold,
+                currentItemTextItalic = restored?.textItalic ?: state.currentItemTextItalic,
             )
         }
 
@@ -765,6 +794,8 @@ class Reducer(
             intent.fontFamilyKey,
             intent.alignment,
             intent.color,
+            bold = intent.bold,
+            italic = intent.italic,
         )
         return state.snapshot().copy(
             elements = useCase.addElement(newText, state.elements),

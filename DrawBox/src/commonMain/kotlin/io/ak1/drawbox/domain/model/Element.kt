@@ -51,6 +51,30 @@ val Element.Shape.hasFill: Boolean
  * @see Element.Path
  * @see Element.Shape
  */
+/**
+ * Sparse per-substring style override over an [Element.Text]'s block-level
+ * style. Offsets are UTF-16 code-unit indices into [Element.Text.text] (the
+ * same units [androidx.compose.ui.text.AnnotatedString] uses).
+ *
+ * A `null` field inherits the block style; `false` for [bold] / [italic] means
+ * explicitly normal, which matters when the block base is bold or italic.
+ * [alignment] is paragraph-scoped: it applies to the whole paragraph containing
+ * the run (bounded by `\n`), and normalization keeps at most one
+ * alignment-bearing run per paragraph.
+ *
+ * Runs are kept sorted, non-overlapping, and clamped by
+ * [io.ak1.drawbox.domain.model.normalizeTextRuns].
+ */
+data class TextRun(
+    val start: Int,
+    val end: Int,
+    val fontFamilyKey: String? = null,
+    val fontSize: Float? = null,
+    val bold: Boolean? = null,
+    val italic: Boolean? = null,
+    val alignment: TextAlignment? = null,
+)
+
 sealed class Element {
     abstract val id: String
     abstract val zIndex: Int
@@ -253,9 +277,10 @@ sealed class Element {
     }
 
     /**
-     * Block-level plain-text element. Single style applies to the whole block;
-     * rich-text features (inline bold / italic spans, links, cursor-within-text
-     * editing) are intentionally NOT in scope here and are tracked separately.
+     * Block-level plain-text element with optional inline styling. The
+     * block-level [fontFamilyKey]/[fontSize]/[bold]/[italic]/[alignment] define
+     * the base style; [runs] override it for substrings (including
+     * paragraph-level alignment).
      *
      * Two-piece geometry — the user owns the *wrap width*, the renderer owns
      * the *measured height*. After every layout, if the rendered height drifts
@@ -269,7 +294,8 @@ sealed class Element {
      * frame); dragging a vertical handle is a no-op since height is auto.
      *
      * @property text Raw string content. Newlines (`\n`) are honored as hard
-     *   breaks; auto-wrap fills each visual line up to [wrapWidth].
+     *   breaks; auto-wrap fills each visual line up to [wrapWidth]. This stays
+     *   the canonical plain text; [runs] are offsets into it.
      * @property fontFamilyKey Logical name resolved via the host-side
      *   [io.ak1.drawbox.presentation.viewmodel.DrawBoxController.registerFont]
      *   registry. Unknown keys fall back to `sans`.
@@ -284,6 +310,8 @@ sealed class Element {
      *   after the first layout pass. Never written by user gestures.
      * @property opacity Render-time alpha (0.0..1.0), independent of [color]'s
      *   own alpha channel.
+     * @property runs Sparse per-substring style overrides, normalized to be
+     *   sorted, clamped and non-overlapping. Empty for uniformly styled text.
      */
     data class Text(
         override val id: String = Uuid.random().toString(),
@@ -308,6 +336,10 @@ sealed class Element {
          * documents written before bold existed load unchanged.
          */
         val bold: Boolean = false,
+        /** Render with the platform italic face; false by default. */
+        val italic: Boolean = false,
+        /** Sparse inline style overrides; see [TextRun]. */
+        val runs: List<TextRun> = emptyList(),
     ) : Element()
 
     data class Shape(

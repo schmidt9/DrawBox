@@ -133,6 +133,8 @@ sealed class Intent {
         val fontFamilyKey: String,
         val alignment: TextAlignment,
         val color: Color,
+        val bold: Boolean = false,
+        val italic: Boolean = false,
     ) : Intent()
 
     /**
@@ -155,6 +157,17 @@ sealed class Intent {
      */
     data class UpdateText(val id: String, val text: String) : Intent()
 
+    /**
+     * Replace the text **and** its inline run overrides in one history step
+     * (rich-text commit from the inline editor). [runs] are normalized and
+     * clamped against [text]. Snapshots history once.
+     */
+    data class UpdateRichText(
+        val id: String,
+        val text: String,
+        val runs: List<TextRun> = emptyList(),
+    ) : Intent()
+
     /** Replace font size on every selected text element. Snapshots history. */
     data class SetSelectedFontSize(val size: Float) : Intent()
 
@@ -163,6 +176,12 @@ sealed class Intent {
 
     /** Replace font family key on every selected text element. Snapshots history. */
     data class SetSelectedFontFamily(val fontFamilyKey: String) : Intent()
+
+    /** Set bold on every selected text element. Snapshots history. */
+    data class SetSelectedTextBold(val bold: Boolean) : Intent()
+
+    /** Set italic on every selected text element. Snapshots history. */
+    data class SetSelectedTextItalic(val italic: Boolean) : Intent()
 
     /**
      * Default font size for future text inserts. Mirrors [SetStrokeWidth] for
@@ -176,6 +195,12 @@ sealed class Intent {
 
     /** Default text alignment for future text inserts. Not history-tracked. */
     data class SetTextAlignment(val alignment: TextAlignment) : Intent()
+
+    /** Default bold for future text inserts. Not history-tracked. */
+    data class SetTextBold(val bold: Boolean) : Intent()
+
+    /** Default italic for future text inserts. Not history-tracked. */
+    data class SetTextItalic(val italic: Boolean) : Intent()
 
     /**
      * Renderer-driven height reconciliation for a single text element.

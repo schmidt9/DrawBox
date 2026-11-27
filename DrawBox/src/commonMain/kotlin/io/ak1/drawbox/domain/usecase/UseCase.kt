@@ -9,10 +9,14 @@ import io.ak1.drawbox.domain.model.ResizeHandle
 import io.ak1.drawbox.domain.model.ShapeType
 import io.ak1.drawbox.domain.model.StrokeStyle
 import io.ak1.drawbox.domain.model.TextAlignment
+import io.ak1.drawbox.domain.model.TextRun
+import io.ak1.drawbox.domain.model.TextRunProperty
 import io.ak1.drawbox.domain.model.bakedIntoParent
+import io.ak1.drawbox.domain.model.blockStyle
 import io.ak1.drawbox.domain.model.bounds
 import io.ak1.drawbox.domain.model.childrenAt
 import io.ak1.drawbox.domain.model.clearDescendantLayerIds
+import io.ak1.drawbox.domain.model.clearTextRunOverride
 import io.ak1.drawbox.domain.model.connectorAnchor
 import io.ak1.drawbox.domain.model.copyElementLayerId
 import io.ak1.drawbox.domain.model.elementParentFrameVector
@@ -21,6 +25,8 @@ import io.ak1.drawbox.domain.model.findElementById
 import io.ak1.drawbox.domain.model.flattenElements
 import io.ak1.drawbox.domain.model.hitTest
 import io.ak1.drawbox.domain.model.mapElementById
+import io.ak1.drawbox.domain.model.normalizeTextRuns
+import io.ak1.drawbox.domain.model.remapTextRunsAfterEdit
 import io.ak1.drawbox.domain.model.removeElementsByIds
 import io.ak1.drawbox.domain.model.replaceScopeChildren
 import io.ak1.drawbox.domain.model.resizeBounds
@@ -195,6 +201,8 @@ class UseCase {
         fontFamilyKey: String,
         alignment: TextAlignment,
         color: Color,
+        bold: Boolean = false,
+        italic: Boolean = false,
     ): Element.Text {
         val now = Clock.System.now().toEpochMilliseconds()
         // Initial guess: a single-line block at fontSize*1.2 tall. The
@@ -211,6 +219,8 @@ class UseCase {
             measuredHeight = (fontSize * 1.2f).coerceAtLeast(fontSize),
             createdAt = now,
             modifiedAt = now,
+            bold = bold,
+            italic = italic,
         )
     }
 
@@ -229,41 +239,116 @@ class UseCase {
         if (el is Element.Text) el.copy(measuredHeight = height) else el
     }
 
-    /** Replace the [text] field of a single [Element.Text]. Snapshots history. */
+    /**
+     * Replace the [text] field of a single [Element.Text]. Existing run
+     * overrides are remapped through the edit so offsets stay valid (plain-text
+     * embedders can keep using this). Snapshots history.
+     */
     fun updateText(
         elements: List<Element>,
         id: String,
         text: String,
     ): List<Element> = elements.mapElementById(id) { el ->
-        if (el is Element.Text) el.copy(text = text).touched() else el
+        if (el is Element.Text) {
+            el.copy(
+                text = text,
+                runs = remapTextRunsAfterEdit(el.text, text, el.runs, el.blockStyle()),
+            ).touched()
+        } else {
+            el
+        }
     }
 
-    /** Set font size on every selected [Element.Text]. */
+    /**
+     * Replace both the text and its inline run overrides (rich-text commit).
+     * Runs are normalized/clamped against the new text. Snapshots history.
+     */
+    fun updateRichText(
+        elements: List<Element>,
+        id: String,
+        text: String,
+        runs: List<TextRun>,
+    ): List<Element> = elements.mapElementById(id) { el ->
+        if (el is Element.Text) {
+            el.copy(
+                text = text,
+                runs = normalizeTextRuns(text, runs, el.blockStyle()),
+            ).touched()
+        } else {
+            el
+        }
+    }
+
+    /** Set font size on every selected [Element.Text], making it uniform. */
     fun setSelectedFontSize(
         elements: List<Element>,
         ids: Set<String>,
         size: Float,
     ): List<Element> = applyStyleToSelection(elements, ids) { el ->
-        if (el is Element.Text) el.copy(fontSize = size).touched() else el
+        if (el is Element.Text) {
+            el.copy(fontSize = size).clearingOverride(TextRunProperty.FONT_SIZE).touched()
+        } else {
+            el
+        }
     }
 
-    /** Set text alignment on every selected [Element.Text]. */
+    /** Set text alignment on every selected [Element.Text], making it uniform. */
     fun setSelectedTextAlignment(
         elements: List<Element>,
         ids: Set<String>,
         alignment: TextAlignment,
     ): List<Element> = applyStyleToSelection(elements, ids) { el ->
-        if (el is Element.Text) el.copy(alignment = alignment).touched() else el
+        if (el is Element.Text) {
+            el.copy(alignment = alignment).clearingOverride(TextRunProperty.ALIGNMENT).touched()
+        } else {
+            el
+        }
     }
 
-    /** Set font family key on every selected [Element.Text]. */
+    /** Set font family key on every selected [Element.Text], making it uniform. */
     fun setSelectedFontFamily(
         elements: List<Element>,
         ids: Set<String>,
         fontFamilyKey: String,
     ): List<Element> = applyStyleToSelection(elements, ids) { el ->
-        if (el is Element.Text) el.copy(fontFamilyKey = fontFamilyKey).touched() else el
+        if (el is Element.Text) {
+            el.copy(fontFamilyKey = fontFamilyKey)
+                .clearingOverride(TextRunProperty.FONT_FAMILY).touched()
+        } else {
+            el
+        }
     }
+
+    /** Set bold on every selected [Element.Text], making it uniform. */
+    fun setSelectedTextBold(
+        elements: List<Element>,
+        ids: Set<String>,
+        bold: Boolean,
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
+        if (el is Element.Text) {
+            el.copy(bold = bold).clearingOverride(TextRunProperty.BOLD).touched()
+        } else {
+            el
+        }
+    }
+
+    /** Set italic on every selected [Element.Text], making it uniform. */
+    fun setSelectedTextItalic(
+        elements: List<Element>,
+        ids: Set<String>,
+        italic: Boolean,
+    ): List<Element> = applyStyleToSelection(elements, ids) { el ->
+        if (el is Element.Text) {
+            el.copy(italic = italic).clearingOverride(TextRunProperty.ITALIC).touched()
+        } else {
+            el
+        }
+    }
+
+    /** Drop [property]'s run overrides after a whole-block change. */
+    private fun Element.Text.clearingOverride(property: TextRunProperty): Element.Text = copy(
+        runs = clearTextRunOverride(text, runs, blockStyle(), property),
+    )
 
     // Image operations
     @OptIn(ExperimentalTime::class)

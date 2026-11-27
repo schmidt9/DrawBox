@@ -23,6 +23,20 @@ The `2.0.x` line is the Kotlin Multiplatform rewrite. The `1.x` line was an Andr
   inserts a new empty text with the State's text defaults.
   `Intent.RequestTextEditAt` also serves hosts that retarget an open inline
   editor when the user taps another text.
+- **Rich text (`Element.Text.runs` + `italic`).** `TextRun` holds sparse,
+  non-overlapping per-substring overrides (font family, size, bold, italic, and
+  paragraph-scoped alignment) over the block-level style. Rendering, PNG export,
+  and the inline editor build an `AnnotatedString` with `SpanStyle`/`ParagraphStyle`
+  (paragraph alignment is honored); SVG emits per-run `<tspan>`s and per-line
+  anchors. `Intent.UpdateRichText(id, text, runs)` commits text + runs in one
+  history step; `UpdateText` remaps runs through plain-text edits. Whole-block
+  style intents (font size/family/alignment plus new
+  `SetSelectedTextBold/Italic`) clear that property's overrides so the block
+  becomes uniform, and `SetTextBold/Italic` + `InsertText(bold, italic)` carry the
+  tool defaults. `InlineTextEditor` gains a `TextFieldValue` + runs overload with
+  `onTextLayout`; the `String` overload remains for existing hosts. Document
+  format version 4 writes optional `italic`/`runs` (older files load as uniform
+  text).
 
 ### Changed
 - `TEXT`-mode taps no longer stack an empty text on top of the text under the

@@ -37,7 +37,7 @@ class LayerSerializationTest {
         )
 
         val json = PagesDrawingSerializer.serialize(payload)
-        assertTrue(json.contains("\"version\": 3"))
+        assertTrue(json.contains("\"version\": 4"))
         val loaded = PagesDrawingSerializer.deserialize(json)
 
         val page = loaded.pages.single()

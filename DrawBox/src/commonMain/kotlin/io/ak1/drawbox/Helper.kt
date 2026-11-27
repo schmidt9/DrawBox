@@ -8,16 +8,15 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.unit.sp
 import io.ak1.drawbox.domain.model.Element
 import io.ak1.drawbox.domain.model.TextAlignment
-import io.ak1.drawbox.text.FontRegistry
+import io.ak1.drawbox.domain.model.TextBlockStyle
+import io.ak1.drawbox.domain.model.TextRun
+import io.ak1.drawbox.text.buildAnnotatedText
+import io.ak1.drawbox.text.toComposeTextStyle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -296,6 +295,8 @@ internal class TextLayoutCache {
         val alignment: TextAlignment,
         val wrapWidth: Float,
         val bold: Boolean,
+        val italic: Boolean,
+        val runs: List<TextRun>,
     )
     private data class Entry(val key: Key, val layout: TextLayoutResult)
     private val byId = HashMap<String, Entry>()
@@ -309,18 +310,22 @@ internal class TextLayoutCache {
         wrapWidth: Float,
         measurer: TextMeasurer,
         bold: Boolean = false,
+        italic: Boolean = false,
+        runs: List<TextRun> = emptyList(),
     ): TextLayoutResult {
-        val key = Key(text, fontFamilyKey, fontSize, alignment, wrapWidth, bold)
+        val key = Key(text, fontFamilyKey, fontSize, alignment, wrapWidth, bold, italic, runs)
         val existing = byId[id]
         if (existing != null && existing.key == key) return existing.layout
-        val style = TextStyle(
-            fontSize = fontSize.sp,
-            fontFamily = FontRegistry.resolve(fontFamilyKey),
-            textAlign = alignment.toComposeAlign(),
-            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+        val base = TextBlockStyle(
+            fontFamilyKey = fontFamilyKey,
+            fontSize = fontSize,
+            bold = bold,
+            italic = italic,
+            alignment = alignment,
         )
+        val style = base.toComposeTextStyle()
         val layout = measurer.measure(
-            text = text,
+            text = buildAnnotatedText(text, runs, base),
             style = style,
             constraints = Constraints(maxWidth = wrapWidth.toInt().coerceAtLeast(1)),
             softWrap = true,
@@ -340,8 +345,3 @@ internal class TextLayoutCache {
     fun size(): Int = byId.size
 }
 
-private fun TextAlignment.toComposeAlign(): TextAlign = when (this) {
-    TextAlignment.LEFT -> TextAlign.Left
-    TextAlignment.CENTER -> TextAlign.Center
-    TextAlignment.RIGHT -> TextAlign.Right
-}
