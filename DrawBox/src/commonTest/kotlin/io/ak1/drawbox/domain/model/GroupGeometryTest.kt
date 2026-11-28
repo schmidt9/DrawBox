@@ -85,7 +85,7 @@ class GroupGeometryTest {
     }
 
     @Test
-    fun withBoundsScalesGeometryNotStrokeOrFont() {
+    fun withBoundsScalesGroupTextButNotStrokeOrSampleWidth() {
         val path = Element.Path(
             id = "p",
             samples = listOf(
@@ -107,16 +107,148 @@ class GroupGeometryTest {
         )
         val group = Element.Group(id = "g", children = listOf(path, text))
 
+        // Old group bounds are 300 x 100, so this is a uniform 2x resize.
         val scaled = group.withBounds(Rect(0f, 0f, 600f, 200f)) as Element.Group
         val scaledPath = scaled.children[0] as Element.Path
         val scaledText = scaled.children[1] as Element.Text
 
         assertEquals(3f, scaledPath.strokeWidth)
         assertEquals(listOf(3f, 3f), scaledPath.samples.map { it.width })
-        assertEquals(20f, scaledText.fontSize)
-        assertEquals(24f, scaledText.measuredHeight)
+        assertEquals(40f, scaledText.fontSize)
+        assertEquals(48f, scaledText.measuredHeight)
         assertEquals(200f, scaledText.wrapWidth)
         assertEquals(Rect(0f, 0f, 600f, 200f), scaled.bounds())
+    }
+
+    @Test
+    fun standaloneTextResizeKeepsItsFontSize() {
+        val text = Element.Text(
+            id = "t",
+            text = "Hello",
+            fontSize = 20f,
+            color = Color.Black,
+            topLeft = Offset(0f, 0f),
+            wrapWidth = 100f,
+            measuredHeight = 24f,
+        )
+
+        val scaled = text.withBounds(Rect(0f, 0f, 300f, 72f)) as Element.Text
+
+        assertEquals(20f, scaled.fontSize)
+        assertEquals(300f, scaled.wrapWidth)
+    }
+
+    @Test
+    fun withBoundsScalesNestedGroupTextOnce() {
+        val text = Element.Text(
+            id = "t",
+            text = "子",
+            fontSize = 20f,
+            color = Color.Black,
+            topLeft = Offset(0f, 0f),
+            wrapWidth = 100f,
+            measuredHeight = 24f,
+        )
+        val inner = Element.Group(id = "inner", children = listOf(text))
+        val outer = Element.Group(id = "outer", children = listOf(inner))
+
+        // Old bounds are 100 x 24; 400 x 48 gives a 4x width and 2x height
+        // factor. Text size follows width, so the font quadruples.
+        val scaled = outer.withBounds(Rect(0f, 0f, 400f, 48f)) as Element.Group
+        val scaledInner = scaled.children.single() as Element.Group
+        val scaledText = scaledInner.children.single() as Element.Text
+
+        // The factor applies exactly once, not compounded at each group level.
+        assertEquals(80f, scaledText.fontSize)
+    }
+
+    @Test
+    fun edgeResizeRoundTripRestoresGroupTextSize() {
+        val text = Element.Text(
+            id = "t",
+            text = "Hello",
+            fontSize = 20f,
+            color = Color.Black,
+            topLeft = Offset(0f, 0f),
+            wrapWidth = 100f,
+            measuredHeight = 24f,
+        )
+        val group = Element.Group(id = "g", children = listOf(text))
+        val original = group.bounds()
+
+        // Width edge: shrink to half, then drag the same edge back out.
+        val narrow = group.withBounds(
+            Rect(original.left, original.top, original.left + original.width / 2f, original.bottom),
+        )
+        assertEquals(
+            10f,
+            ((narrow as Element.Group).children.single() as Element.Text).fontSize,
+            0.01f,
+        )
+        val wide = narrow.withBounds(original)
+        assertEquals(
+            20f,
+            ((wide as Element.Group).children.single() as Element.Text).fontSize,
+            0.01f,
+        )
+    }
+
+    @Test
+    fun heightOnlyResizeLeavesGroupTextSizeAlone() {
+        val text = Element.Text(
+            id = "t",
+            text = "Hello",
+            fontSize = 20f,
+            color = Color.Black,
+            topLeft = Offset(0f, 0f),
+            wrapWidth = 100f,
+            measuredHeight = 24f,
+        )
+        val group = Element.Group(id = "g", children = listOf(text))
+        val original = group.bounds()
+
+        // Glyph size tracks width; stretching the diagram vertically must not
+        // shrink or grow the labels.
+        val tall = group.withBounds(
+            Rect(original.left, original.top, original.right, original.top + original.height * 2f),
+        )
+        assertEquals(
+            20f,
+            ((tall as Element.Group).children.single() as Element.Text).fontSize,
+            0.01f,
+        )
+    }
+
+    @Test
+    fun repeatedWidthResizeFramesDoNotRatchetGroupText() {
+        val text = Element.Text(
+            id = "t",
+            text = "Hello",
+            fontSize = 20f,
+            color = Color.Black,
+            topLeft = Offset(0f, 0f),
+            wrapWidth = 100f,
+            measuredHeight = 24f,
+        )
+        val original = Element.Group(id = "g", children = listOf(text))
+        val bounds = original.bounds()
+        var current: Element = original
+
+        fun resizeToWidth(width: Float) {
+            current = current.withBounds(
+                Rect(bounds.left, bounds.top, bounds.left + width, bounds.bottom),
+            )
+        }
+
+        // The app applies every drag frame to the previous frame's element.
+        // Grow to 2x width, then drag the same edge back to the start.
+        for (step in 1..20) resizeToWidth(bounds.width * (1f + step / 20f))
+        val grownFont = ((current as Element.Group).children.single() as Element.Text).fontSize
+        assertEquals(40f, grownFont, 0.01f)
+
+        for (step in 19 downTo 0) resizeToWidth(bounds.width * (1f + step / 20f))
+        val restoredFont = ((current as Element.Group).children.single() as Element.Text).fontSize
+        assertEquals(20f, restoredFont, 0.01f)
     }
 
     @Test

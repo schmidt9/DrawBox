@@ -508,8 +508,34 @@ fun Element.translate(delta: Offset): Element = when (this) {
  * this snaps start/end to the new bbox corners (preserving orientation of the
  * original drag direction). For freedraw paths every point is scaled linearly.
  * Rotation unchanged.
+ *
+ * Resizing a **group** also scales the font size of its text descendants by the
+ * horizontal axis factor, so a composed diagram keeps its text proportions
+ * instead of leaving tiny labels inside enlarged shapes. Text size follows the
+ * width (the same dimension the Visio templates derive their fonts from), and
+ * the text's wrap box already scales with width, so the labels cannot overflow
+ * horizontally. A height-only resize leaves the font alone. The rule is stable
+ * under repeated edge resizes — shrinking and then re-enlarging the same edge
+ * restores the original font. Resizing a standalone text still keeps its font
+ * size (resize edits the wrap box only). Stroke widths and path sample widths
+ * are never scaled.
  */
 fun Element.withBounds(newBounds: Rect): Element {
+    // A group's own resize scales every text inside it; the factor is computed
+    // once at the root and propagated unchanged through nested groups so it is
+    // not compounded at each level.
+    val textScale = if (this is Element.Group) {
+        val target = newBounds.normalized().minSize(1f)
+        val old = bounds()
+        val scaleX = if (old.width > 0f) target.width / old.width else 1f
+        scaleX.takeIf { it.isFinite() && it > 0f } ?: 1f
+    } else {
+        1f
+    }
+    return withBounds(newBounds, textScale)
+}
+
+private fun Element.withBounds(newBounds: Rect, textScale: Float): Element {
     val safeBounds = newBounds.normalized().minSize(1f)
     return when (this) {
         is Element.Path -> {
@@ -533,6 +559,7 @@ fun Element.withBounds(newBounds: Rect): Element {
                             mapCorner(cb.topLeft, old, safeBounds),
                             mapCorner(cb.bottomRight, old, safeBounds),
                         ),
+                        textScale,
                     )
                 },
             ).touched()
@@ -542,9 +569,21 @@ fun Element.withBounds(newBounds: Rect): Element {
         // renderer owns measuredHeight and will refresh it on the next
         // layout pass via Intent.SyncTextMeasuredHeight. This makes vertical
         // handles a visual no-op, matching the behavior in tldraw / Figma.
+        // The one exception is text inside a resized group: [textScale] keeps
+        // the label proportional to the scaled diagram.
         is Element.Text -> copy(
             topLeft = safeBounds.topLeft,
             wrapWidth = safeBounds.width,
+            fontSize = if (textScale == 1f) {
+                fontSize
+            } else {
+                (fontSize * textScale).coerceAtLeast(1f)
+            },
+            measuredHeight = if (textScale == 1f) {
+                measuredHeight
+            } else {
+                (measuredHeight * textScale).coerceAtLeast(1f)
+            },
         ).touched()
         is Element.Shape -> {
             val old = bounds()
