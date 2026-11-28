@@ -2,6 +2,7 @@ package io.ak1.drawbox.domain.model
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import kotlin.math.abs
 import kotlin.test.Test
@@ -281,6 +282,20 @@ class GeometryTest {
         val newBounds = resizeBoundsForElement(group, ResizeHandle.BottomRight, Offset(400f, 300f))
 
         assertRectEquals(Rect(0f, 0f, 600f, 300f), newBounds)
+    }
+
+    @Test
+    fun cornerResizeLocksImageAspectRatio() {
+        val image = Element.Image(
+            bytes = byteArrayOf(1),
+            intrinsicSize = Size(200f, 100f),
+            points = listOf(Offset(0f, 0f), Offset(200f, 100f)),
+        )
+
+        // Raw 300 x 250 (scales 1.5 and 2.5) -> 500 x 250.
+        val newBounds = resizeBoundsForElement(image, ResizeHandle.BottomRight, Offset(300f, 250f))
+
+        assertRectEquals(Rect(0f, 0f, 500f, 250f), newBounds)
     }
 
     @Test

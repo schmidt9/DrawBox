@@ -733,9 +733,9 @@ private fun applyHandleDrag(rect: Rect, handle: ResizeHandle, p: Offset): Rect =
  *
  * For circles, the result is constrained to a square anchored at the un-dragged
  * corner / edge midpoint in local space. Corner handles also lock the original
- * aspect ratio for shapes (other than circles) and groups, anchored at the
- * opposite corner; edge handles remain free. The rotation shift is then applied
- * to keep that anchor's WORLD position fixed.
+ * aspect ratio for shapes (other than circles), groups and images, anchored at
+ * the opposite corner; edge handles remain free. The rotation shift is then
+ * applied to keep that anchor's WORLD position fixed.
  */
 fun resizeBoundsForElement(
     element: Element,
@@ -803,13 +803,14 @@ private fun constrainBoundsForType(
         }
     }
 
-    // Corner handles keep a shape's or group's aspect ratio so composed
-    // diagrams and pictures do not distort; edge handles stay free. Text,
-    // paths and images keep their existing free-corner behavior (text height
-    // is renderer-owned, and paths/images are not aspect-locked here).
+    // Corner handles keep a shape's, group's or image's aspect ratio so
+    // composed diagrams and pictures do not distort; edge handles stay free.
+    // Text and paths keep their existing free-corner behavior (text height is
+    // renderer-owned, and paths are not aspect-locked here).
     val corner = handle == ResizeHandle.TopLeft || handle == ResizeHandle.TopRight ||
         handle == ResizeHandle.BottomLeft || handle == ResizeHandle.BottomRight
-    val aspectLocked = element is Element.Shape || element is Element.Group
+    val aspectLocked = element is Element.Shape || element is Element.Group ||
+        element is Element.Image
     if (!corner || !aspectLocked) return raw
     return constrainCornerAspectRatio(handle, raw, original)
 }
