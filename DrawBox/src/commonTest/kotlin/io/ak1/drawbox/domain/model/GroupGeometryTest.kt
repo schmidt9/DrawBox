@@ -309,4 +309,49 @@ class GroupGeometryTest {
         // Child geometry moved with the group; relative layout is unchanged.
         assertEquals(listOf("a", "b"), baked.children.map { it.id })
     }
+
+    @Test
+    fun elementRenderedWorldPointAppliesOwnRotationThenAncestors() {
+        val text = Element.Text(
+            id = "t",
+            text = "X",
+            fontSize = 10f,
+            color = Color.Black,
+            topLeft = Offset(10f, 20f),
+            wrapWidth = 100f,
+            measuredHeight = 20f,
+            rotation = 90f,
+        )
+        // Top-left rotated 90° around the wrap-box centre (60, 30).
+        val ownRotated = rotateAround(text.topLeft, text.bounds().center, 90f)
+        assertPointEquals(Offset(70f, -20f), ownRotated)
+
+        // No rotation: identity.
+        val plain = text.copy(rotation = 0f)
+        assertPointEquals(
+            plain.topLeft,
+            listOf(plain).elementRenderedWorldPoint(plain.id, plain.topLeft),
+        )
+
+        // Own rotation applies first, then the ancestor group's rotation.
+        val group = Element.Group(id = "g", children = listOf(text), rotation = 90f)
+        val expected = rotateAround(ownRotated, group.bounds().center, 90f)
+        assertPointEquals(
+            expected,
+            listOf(group).elementRenderedWorldPoint(text.id, text.topLeft),
+        )
+        // The ancestor-only helper deliberately does not rotate the corner.
+        assertEquals(
+            text.topLeft,
+            listOf(text).elementWorldPoint(text.id, text.topLeft),
+        )
+    }
+
+    private fun assertPointEquals(expected: Offset, actual: Offset, tolerance: Float = 0.001f) {
+        assertTrue(
+            abs(expected.x - actual.x) <= tolerance &&
+                abs(expected.y - actual.y) <= tolerance,
+            "expected $expected but was $actual",
+        )
+    }
 }

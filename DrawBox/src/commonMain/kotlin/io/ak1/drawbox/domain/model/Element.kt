@@ -310,6 +310,9 @@ sealed class Element {
      *   after the first layout pass. Never written by user gestures.
      * @property opacity Render-time alpha (0.0..1.0), independent of [color]'s
      *   own alpha channel.
+     * @property rotation Clockwise degrees around the wrap box's centre,
+     *   applied at render/hit-test/export time like every other element.
+     *   [topLeft] and [wrapWidth] stay the unrotated box.
      * @property runs Sparse per-substring style overrides, normalized to be
      *   sorted, clamped and non-overlapping. Empty for uniformly styled text.
      */

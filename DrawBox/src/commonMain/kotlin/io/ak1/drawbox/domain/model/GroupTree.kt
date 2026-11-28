@@ -242,6 +242,23 @@ fun List<Element>.elementWorldPoint(id: String, localPoint: Offset): Offset {
 }
 
 /**
+ * Map a point from [id]'s local frame into the world frame as it is actually
+ * drawn: the element's own rotation around its bounds centre first, then the
+ * ancestor group rotations via [elementWorldPoint]. Use this for chrome that
+ * must follow a leaf's rendered corner, such as the inline text editor's
+ * anchor; [elementWorldPoint] deliberately ignores the element's own rotation.
+ */
+fun List<Element>.elementRenderedWorldPoint(id: String, localPoint: Offset): Offset {
+    val element = pathToElement(id)?.lastOrNull() ?: return localPoint
+    val rotated = if (element.rotation == 0f) {
+        localPoint
+    } else {
+        rotateAround(localPoint, element.bounds().center, element.rotation)
+    }
+    return elementWorldPoint(id, rotated)
+}
+
+/**
  * Map a world point into the frame of [id]'s parent element (the frame its
  * bounds and rotation live in), undoing ancestor group rotations.
  */
