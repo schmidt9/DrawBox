@@ -324,10 +324,17 @@ internal class TextLayoutCache {
             alignment = alignment,
         )
         val style = base.toComposeTextStyle()
+        // Pin both constraints to the wrap box. Measuring with maxWidth only
+        // returns the intrinsic line width, which makes TextAlign.CENTER/RIGHT
+        // a no-op for text shorter than its box (Visio labels, for example).
+        val layoutWidth = wrapWidth.toInt().coerceAtLeast(1)
         val layout = measurer.measure(
             text = buildAnnotatedText(text, runs, base),
             style = style,
-            constraints = Constraints(maxWidth = wrapWidth.toInt().coerceAtLeast(1)),
+            constraints = Constraints(
+                minWidth = layoutWidth,
+                maxWidth = layoutWidth,
+            ),
             softWrap = true,
             // `fontSize.sp` under this density = `fontSize` layout pixels, i.e.
             // world units (see [WorldTextDensity]).
