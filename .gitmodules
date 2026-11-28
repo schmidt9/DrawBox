@@ -1,0 +1,4 @@
+[submodule "third_party/rang-vikalp"]
+	path = third_party/rang-vikalp
+	url = https://github.com/schmidt9/rang-vikalp.git
+	branch = master
