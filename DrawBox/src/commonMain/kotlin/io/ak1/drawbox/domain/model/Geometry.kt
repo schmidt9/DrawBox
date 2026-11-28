@@ -84,6 +84,14 @@ fun Element.visualAabb(): Rect {
     )
 }
 
+/**
+ * World-space union of every element's rotation-aware rendered bounds
+ * ([visualAabb]), or null when [elements] is empty. Nothing is filtered:
+ * callers pass [State.visibleElements] to drop hidden layers.
+ */
+fun contentBounds(elements: List<Element>): Rect? =
+    elements.map { it.visualAabb() }.reduceOrNull { acc, rect -> acc.union(rect) }
+
 private fun lineArrowBounds(shape: Element.Shape): Rect {
     if (shape.points.size < 2) return pointsBounds(shape.points)
     val start = shape.points[0]

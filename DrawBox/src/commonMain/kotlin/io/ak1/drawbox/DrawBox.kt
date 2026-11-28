@@ -40,6 +40,7 @@ import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -98,6 +99,7 @@ import io.ak1.drawbox.domain.model.ShapeType
 import io.ak1.drawbox.domain.model.State
 import io.ak1.drawbox.domain.model.StrokeStyle
 import io.ak1.drawbox.domain.model.Viewport
+import io.ak1.drawbox.input.normalizeHorizontalWheelDelta
 import io.ak1.drawbox.domain.model.alignmentMovingBounds
 import io.ak1.drawbox.domain.model.alignmentTargetRects
 import io.ak1.drawbox.domain.model.angleFromCenter
@@ -554,10 +556,13 @@ fun DrawBox(
                     }
                 }
             }
-            // Scroll wheel + trackpad: Ctrl=zoom, Shift=force horizontal (for
-            // mice without a horizontal wheel), default=2D pan using whichever
-            // axes the device supplies. Trackpad two-finger scroll sends both
-            // delta.x and delta.y; classic mouse wheels send only delta.y.
+            // Scroll wheel + trackpad: Ctrl/Cmd=zoom at the pointer, Shift=force
+            // horizontal (for mice without a horizontal wheel), default=2D pan
+            // using whichever axes the device supplies. Trackpad two-finger
+            // scroll sends both delta.x and delta.y; classic mouse wheels send
+            // only delta.y. Compose Desktop reports Shift+wheel as delta.x with
+            // delta.y == 0, so every branch falls back to the other axis.
+            // macOS Cmd arrives as isMetaPressed, not isCtrlPressed.
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
@@ -565,20 +570,49 @@ fun DrawBox(
                         if (event.type != PointerEventType.Scroll) continue
                         val change = event.changes.firstOrNull() ?: continue
                         val delta = change.scrollDelta
+                        val mods = event.keyboardModifiers
                         when {
-                            event.keyboardModifiers.isCtrlPressed -> {
-                                if (delta.y != 0f) {
-                                    val factor = if (delta.y < 0) 1.1f else 1f / 1.1f
-                                    latestOnIntent(Intent.ZoomBy(factor, change.position))
+                            mods.isCtrlPressed || mods.isMetaPressed -> {
+                                // Ctrl+Shift also lands on the x axis on Desktop;
+                                // normalize its coarse macOS units like Shift-pan.
+                                val zoomDelta = if (delta.y != 0f) {
+                                    delta.y
+                                } else {
+                                    normalizeHorizontalWheelDelta(delta.x)
+                                }
+                                if (zoomDelta != 0f) {
+                                    latestOnIntent(
+                                        Intent.ZoomBy(
+                                            factor = Viewport.wheelZoomFactor(zoomDelta),
+                                            focalScreen = change.position,
+                                        ),
+                                    )
                                 }
                             }
-                            event.keyboardModifiers.isShiftPressed -> {
-                                // Map vertical wheel to horizontal pan for users
-                                // whose mouse has no horizontal axis.
-                                latestOnIntent(Intent.PanBy(Offset(-delta.y * 50f, 0f)))
+                            mods.isShiftPressed -> {
+                                // macOS reports Shift+wheel x in coarse units
+                                // (~10x vertical); normalize so speeds match.
+                                val horizontal = if (delta.x != 0f) {
+                                    normalizeHorizontalWheelDelta(delta.x)
+                                } else {
+                                    delta.y
+                                }
+                                if (horizontal != 0f) {
+                                    latestOnIntent(
+                                        Intent.PanBy(Offset(-horizontal * WHEEL_PAN_STEP_PX, 0f)),
+                                    )
+                                }
                             }
                             else -> {
-                                latestOnIntent(Intent.PanBy(Offset(-delta.x * 50f, -delta.y * 50f)))
+                                latestOnIntent(
+                                    Intent.PanBy(
+                                        Offset(
+                                            x = -delta.x * WHEEL_PAN_STEP_PX,
+                                            y = -delta.y * WHEEL_PAN_STEP_PX *
+                                                WHEEL_VERTICAL_PAN_DAMPING,
+                                        ),
+                                    ),
+                                )
                             }
                         }
                         change.consume()
@@ -1242,6 +1276,14 @@ fun DrawingPreview(
 private val GridLightOnDark = Color(0x40FFFFFF)  // ~25% white over dark bgs
 private val GridDarkOnLight = Color(0x33000000)  // ~20% black over light bgs
 private const val GRID_BASE_STEP_WORLD = 50f
+
+/**
+ * Pan distance per raw wheel unit. Vertical is damped because macOS reports
+ * vertical and (normalized) horizontal wheel deltas at different scales; at
+ * 0.275 one vertical notch moves about half as far as a horizontal one.
+ */
+private const val WHEEL_PAN_STEP_PX = 50f
+private const val WHEEL_VERTICAL_PAN_DAMPING = 0.275f
 
 private fun DrawScope.drawGrid(vp: Viewport, bgColor: Color) {
     val step = GRID_BASE_STEP_WORLD * vp.scale

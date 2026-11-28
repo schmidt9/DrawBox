@@ -12,6 +12,7 @@ import io.ak1.drawbox.domain.model.ToolSettings
 import io.ak1.drawbox.domain.model.Viewport
 import io.ak1.drawbox.domain.model.allElementIds
 import io.ak1.drawbox.domain.model.childrenAt
+import io.ak1.drawbox.domain.model.contentBounds
 import io.ak1.drawbox.domain.model.excludedTopLevelIds
 import io.ak1.drawbox.domain.model.findElementById
 import io.ak1.drawbox.domain.model.flattenElements
@@ -23,6 +24,7 @@ import io.ak1.drawbox.domain.model.resolveTap
 import io.ak1.drawbox.domain.model.sanitizeGroupPath
 import io.ak1.drawbox.domain.model.sanitizeGroupPathForExcludedIds
 import io.ak1.drawbox.domain.model.subtreeIdsOf
+import io.ak1.drawbox.domain.model.visibleElements
 import io.ak1.drawbox.domain.usecase.UseCase
 
 /**
@@ -644,6 +646,20 @@ class Reducer(
         is Intent.ZoomTo -> state.copy(
             viewport = state.viewport.zoomTo(intent.targetScale, intent.focalScreen),
         )
+        is Intent.FitToScreen -> {
+            val size = intent.viewportSize
+            val bounds = if (size.width <= 0f || size.height <= 0f) {
+                null
+            } else {
+                contentBounds(state.visibleElements())
+            }
+            if (bounds == null) {
+                state
+            } else {
+                val next = Viewport.fit(bounds, size, intent.padding, intent.maxScale)
+                if (next == state.viewport) state else state.copy(viewport = next)
+            }
+        }
         is Intent.ResetCamera -> state.copy(viewport = Viewport())
         is Intent.SetTempPan -> state.copy(tempPanActive = intent.active)
 

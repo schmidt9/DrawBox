@@ -552,6 +552,18 @@ sealed class Intent {
     /** Set absolute scale to [targetScale] anchored at [focalScreen]. Not undoable. */
     data class ZoomTo(val targetScale: Float, val focalScreen: Offset) : Intent()
 
+    /**
+     * Center and scale all visible elements inside [viewportSize] screen px
+     * with a [padding] px margin. May zoom in on small content up to
+     * [maxScale] (pass 1f to cap at 100%). No-op for an empty canvas or a
+     * zero-sized viewport. Not undoable.
+     */
+    data class FitToScreen(
+        val viewportSize: Size,
+        val padding: Float = 0f,
+        val maxScale: Float = Viewport.MAX_SCALE,
+    ) : Intent()
+
     /** Reset the viewport to identity (offset = Zero, scale = 1). Not undoable. */
     data object ResetCamera : Intent()
 

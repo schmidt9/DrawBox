@@ -445,4 +445,34 @@ class GeometryTest {
         assertTrue(kotlin.math.abs(topLeftWorld.y - 0f) < eps,
             "topLeft.y ${topLeftWorld.y} drifted from 0")
     }
+
+    @Test
+    fun contentBoundsOfEmptyListIsNull() {
+        assertNull(contentBounds(emptyList()))
+    }
+
+    @Test
+    fun contentBoundsUnionsEveryElement() {
+        val bounds = contentBounds(
+            listOf(
+                rectShape(10f, 20f, 110f, 70f),
+                rectShape(-50f, 0f, 0f, 200f),
+            ),
+        )
+        assertNotNull(bounds)
+        assertRectEquals(Rect(-50f, 0f, 110f, 200f), bounds)
+    }
+
+    @Test
+    fun contentBoundsUsesRotationAwareAabb() {
+        // A 100×100 square rotated 45° spans ≈141.42 on both axes around its
+        // center (50, 50) — the unrotated bounds would be only 100×100.
+        val rotated = rectShape(0f, 0f, 100f, 100f).copy(rotation = 45f)
+        val bounds = contentBounds(listOf(rotated))
+        assertNotNull(bounds)
+        assertRectEquals(
+            Rect(-20.71f, -20.71f, 120.71f, 120.71f),
+            bounds,
+        )
+    }
 }
