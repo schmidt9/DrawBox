@@ -606,14 +606,15 @@ object SvgExporter {
         start: Int,
         end: Int,
     ): String {
-        val boundaries = sortedSetOf(start, end)
+        // `sortedSetOf` is JVM-only; commonMain builds a set and sorts it.
+        val boundaries = mutableSetOf(start, end)
         for (run in runs) {
             if (run.end > start && run.start < end) {
                 boundaries += run.start.coerceIn(start, end)
                 boundaries += run.end.coerceIn(start, end)
             }
         }
-        val points = boundaries.toList()
+        val points = boundaries.sorted()
         val builder = StringBuilder()
         for (i in 0 until points.size - 1) {
             val a = points[i]

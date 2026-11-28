@@ -137,7 +137,7 @@ fun normalizeTextRuns(
         val alignment = run.alignment ?: continue
         val paragraph = paragraphs.firstOrNull { run.start >= it.start && run.start < it.end }
             ?: continue
-        alignmentByParagraph.putIfAbsent(paragraph.start, alignment)
+        alignmentByParagraph.getOrPut(paragraph.start) { alignment }
     }
     val detached = split.map { it.copy(alignment = null) }
 
@@ -280,7 +280,8 @@ fun applyTextSpanOverrides(
     val selEnd = max(start, end).coerceIn(0, text.length)
     if (selStart >= selEnd) return normalized
 
-    val boundaries = sortedSetOf(0, text.length, selStart, selEnd)
+    // `sortedSetOf` is JVM-only; commonMain builds a set and sorts it.
+    val boundaries = mutableSetOf(0, text.length, selStart, selEnd)
     for (run in normalized) {
         boundaries += run.start
         boundaries += run.end
@@ -291,7 +292,7 @@ fun applyTextSpanOverrides(
     }
 
     val out = mutableListOf<TextRun>()
-    val points = boundaries.toList()
+    val points = boundaries.sorted()
     for (i in 0 until points.size - 1) {
         val a = points[i]
         val b = points[i + 1]
