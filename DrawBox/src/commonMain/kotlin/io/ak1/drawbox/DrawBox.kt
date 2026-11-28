@@ -3,7 +3,6 @@ package io.ak1.drawbox
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.awaitDragOrCancellation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
@@ -33,9 +32,11 @@ import androidx.compose.ui.input.key.isCtrlPressed as isKeyCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed as isKeyMetaPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
@@ -45,6 +46,7 @@ import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.positionChangedIgnoreConsumed
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -680,6 +682,10 @@ fun DrawBox(
             }
             .pointerInput(Unit) {
                 var interaction: SelectionInteraction? = null
+                // What the current gesture inserted, so a multi-touch abort can
+                // remove exactly that element (the reducer's last element).
+                var insertedShapeType: ShapeType? = null
+                var insertedPath = false
                 var lastWorld = Offset.Zero
                 // Alignment snapping state, valid for the current gesture only.
                 var moveSnap: MoveSnapState? = null
@@ -694,6 +700,8 @@ fun DrawBox(
                 fun onDragStart(screenPos: Offset) {
                     val s = latestState
                     val world = s.viewport.screenToWorld(screenPos)
+                    insertedShapeType = null
+                    insertedPath = false
                     // Hidden layers count as hidden targets for alignment too.
                     val hiddenIds = latestHiddenIds + s.hiddenLayerTopLevelIds()
                     lastWorld = world
@@ -780,6 +788,7 @@ fun DrawBox(
                             }
                         }
                         Mode.PEN -> {
+                            insertedPath = true
                             latestOnIntent(Intent.InsertNewPath(world))
                             dragInProgress = true
                         }
@@ -801,6 +810,7 @@ fun DrawBox(
                             dragInProgress = true
                         }
                         else -> modeShapeType(s.effectiveMode)?.let { st ->
+                            insertedShapeType = st
                             latestOnIntent(Intent.InsertNewShape(st, world))
                             dragInProgress = true
                         }
@@ -848,6 +858,8 @@ fun DrawBox(
                     latestOnIntent(Intent.EndTransform)
                     interaction = null
                     dragInProgress = false
+                    insertedShapeType = null
+                    insertedPath = false
                     alignmentGuides = emptyList()
                     moveSnap = null
                     moveTargets = emptyList()
@@ -855,7 +867,7 @@ fun DrawBox(
                     resizeSnapEnabled = false
                 }
 
-                fun onDragCancel() {
+                fun onDragCancel(discardDrawn: Boolean) {
                     if (latestState.mode == Mode.SELECT &&
                         interaction is SelectionInteraction.Marquee
                     ) {
@@ -864,9 +876,18 @@ fun DrawBox(
                     if (latestState.mode == Mode.ERASER) {
                         latestOnIntent(Intent.EndErase)
                     }
-                    // A cancelled shape gesture can leave the same invisible
-                    // sliver a release would, so apply the same guard.
-                    if (modeShapeType(latestState.effectiveMode) != null) {
+                    if (discardDrawn) {
+                        // A second pointer turned this into a pan/pinch. The
+                        // camera may already have moved, so the screen-space
+                        // 4dp guard is meaningless: remove whatever this
+                        // gesture inserted, regardless of its size.
+                        insertedShapeType?.let {
+                            latestOnIntent(Intent.DiscardLatestShape(it))
+                        }
+                        if (insertedPath) latestOnIntent(Intent.DiscardLatestPath)
+                    } else if (insertedShapeType != null) {
+                        // A cancelled shape gesture can leave the same invisible
+                        // sliver a release would, so apply the same guard.
                         val drawn = latestState.elements.lastOrNull()
                         if (drawn != null &&
                             drawn.drawnSpanPx(latestState.viewport.scale) < minDrawnShapeSpanPx
@@ -877,6 +898,8 @@ fun DrawBox(
                     latestOnIntent(Intent.EndTransform)
                     interaction = null
                     dragInProgress = false
+                    insertedShapeType = null
+                    insertedPath = false
                     alignmentGuides = emptyList()
                     moveSnap = null
                     moveTargets = emptyList()
@@ -1036,6 +1059,12 @@ fun DrawBox(
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val drawing = latestState.effectiveMode.isDrawingMode()
 
+                    // Two fingers landed together: this is a pan/pinch, not a
+                    // drawing gesture.
+                    if (drawing && currentEvent.changes.count { it.pressed } > 1) {
+                        return@awaitEachGesture
+                    }
+
                     // Drawing modes begin on the first movement with zero touch-
                     // slop, so a stroke / shape / eraser pass starts the instant
                     // the finger moves and exactly at the press point — no ~8dp
@@ -1047,7 +1076,7 @@ fun DrawBox(
                     // stray dot.
                     var overSlop = Offset.Zero
                     val firstDrag = if (drawing) {
-                        awaitDragOrCancellation(down.id)
+                        awaitSinglePointerDragOrCancellation(down.id)
                     } else {
                         awaitTouchSlopOrCancellation(down.id) { change, over ->
                             change.consume()
@@ -1062,11 +1091,24 @@ fun DrawBox(
                     onDrag(firstDrag, if (drawing) firstDrag.positionChange() else overSlop)
                     if (drawing) firstDrag.consume()
 
-                    val completed = drag(firstDrag.id) { change ->
-                        onDrag(change, change.positionChange())
-                        change.consume()
+                    if (drawing) {
+                        when (dragSinglePointer(firstDrag.id) { change ->
+                            onDrag(change, change.positionChange())
+                            change.consume()
+                        }) {
+                            SinglePointerDragResult.Completed -> onDragEnd()
+                            SinglePointerDragResult.Cancelled ->
+                                onDragCancel(discardDrawn = false)
+                            SinglePointerDragResult.MultiTouch ->
+                                onDragCancel(discardDrawn = true)
+                        }
+                    } else {
+                        val completed = drag(firstDrag.id) { change ->
+                            onDrag(change, change.positionChange())
+                            change.consume()
+                        }
+                        if (completed) onDragEnd() else onDragCancel(discardDrawn = false)
                     }
-                    if (completed) onDragEnd() else onDragCancel()
                 }
             },
     ) {
@@ -1358,6 +1400,55 @@ private fun Element.drawnSpanPx(viewportScale: Float): Float {
 private fun Mode.isDrawingMode(): Boolean =
     this == Mode.PEN || this == Mode.POLYGON || this == Mode.ERASER ||
         modeShapeType(this) != null
+
+/** How a single-pointer drawing drag ended. */
+private enum class SinglePointerDragResult { Completed, Cancelled, MultiTouch }
+
+/**
+ * Zero-touch-slop variant of `awaitDragOrCancellation` that returns null as
+ * soon as any other pointer is pressed. A second finger means the gesture
+ * belongs to the multi-touch pan/zoom handler, not to drawing.
+ *
+ * Unlike `drag()`, this never retargets to another pointer when the tracked
+ * one lifts: with two fingers down that case is a multi-touch gesture.
+ */
+private suspend fun AwaitPointerEventScope.awaitSinglePointerDragOrCancellation(
+    pointerId: PointerId,
+): PointerInputChange? {
+    while (true) {
+        val event = awaitPointerEvent()
+        if (event.changes.any { it.pressed && it.id != pointerId }) return null
+        val change = event.changes.firstOrNull { it.id == pointerId } ?: return null
+        if (change.changedToUpIgnoreConsumed()) return change
+        if (change.positionChangedIgnoreConsumed()) {
+            return if (change.isConsumed) null else change
+        }
+    }
+}
+
+/**
+ * Drag loop for drawing modes that mirrors `drag()` but aborts with
+ * [SinglePointerDragResult.MultiTouch] the moment a second pointer is pressed
+ * (including when the tracked pointer lifts while another is down).
+ */
+private suspend fun AwaitPointerEventScope.dragSinglePointer(
+    pointerId: PointerId,
+    onDrag: (PointerInputChange) -> Unit,
+): SinglePointerDragResult {
+    while (true) {
+        val event = awaitPointerEvent()
+        if (event.changes.any { it.pressed && it.id != pointerId }) {
+            return SinglePointerDragResult.MultiTouch
+        }
+        val change = event.changes.firstOrNull { it.id == pointerId }
+            ?: return SinglePointerDragResult.Cancelled
+        if (change.changedToUpIgnoreConsumed()) return SinglePointerDragResult.Completed
+        if (!change.positionChangedIgnoreConsumed()) continue
+        if (change.isConsumed) return SinglePointerDragResult.Cancelled
+        onDrag(change)
+        change.consume()
+    }
+}
 
 // ==================== Selection gesture support ====================
 

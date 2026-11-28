@@ -208,6 +208,12 @@ class Reducer(
                 history = state.history.dropLast(1),
             )
         }
+        is Intent.DiscardLatestShape -> discardLatest(state) { element ->
+            element is Element.Shape && element.shapeType == intent.shapeType
+        }
+        is Intent.DiscardLatestPath -> discardLatest(state) { element ->
+            element is Element.Path
+        }
         is Intent.StartPolygon -> {
             val polygon = useCase.insertNewPolygon(
                 intent.offset,
@@ -797,6 +803,23 @@ class Reducer(
         history = (history + StateSnapshot(elements, layers)).takeLast(HISTORY_CAP),
         future = emptyList(),
     )
+
+    /**
+     * Remove the element most recently inserted by the active drawing gesture
+     * when it matches [predicate], and drop the snapshot its insertion pushed.
+     * Intent processing is synchronous, so the reducer's last element is the
+     * one the gesture just inserted — no round-trip through lagging UI state.
+     */
+    private fun discardLatest(state: State, predicate: (Element) -> Boolean): State {
+        val last = state.elements.lastOrNull() ?: return state
+        if (!predicate(last)) return state
+        return state.copy(
+            elements = useCase.deleteElement(last.id, state.elements),
+            selectedIds = state.selectedIds - last.id,
+            activePolygonId = state.activePolygonId?.takeIf { it != last.id },
+            history = state.history.dropLast(1),
+        )
+    }
 
     /**
      * Insert [intent]'s text and snapshot history once. Shared by

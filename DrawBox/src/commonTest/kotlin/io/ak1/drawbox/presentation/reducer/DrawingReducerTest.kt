@@ -88,6 +88,51 @@ class DrawingReducerTest {
     }
 
     @Test
+    fun testDiscardLatestShapeRemovesInsertedShapeAndSnapshot() {
+        val inserted = reducer.reduce(
+            State(mode = Mode.RECTANGLE),
+            Intent.InsertNewShape(ShapeType.RECTANGLE, Offset(10f, 10f)),
+        )
+        assertEquals(1, inserted.history.size)
+
+        val out = reducer.reduce(inserted, Intent.DiscardLatestShape(ShapeType.RECTANGLE))
+
+        assertTrue(out.elements.isEmpty())
+        assertTrue(out.history.isEmpty())
+        assertTrue(out.selectedIds.isEmpty())
+    }
+
+    @Test
+    fun testDiscardLatestShapeKeepsOtherShapeTypes() {
+        val inserted = reducer.reduce(
+            State(mode = Mode.RECTANGLE),
+            Intent.InsertNewShape(ShapeType.RECTANGLE, Offset(10f, 10f)),
+        )
+        assertEquals(inserted, reducer.reduce(inserted, Intent.DiscardLatestShape(ShapeType.CIRCLE)))
+    }
+
+    @Test
+    fun testDiscardLatestPathRemovesInsertedPathAndSnapshot() {
+        val inserted = reducer.reduce(
+            State(mode = Mode.PEN),
+            Intent.InsertNewPath(Offset(0f, 0f)),
+        )
+        assertEquals(1, inserted.history.size)
+
+        val out = reducer.reduce(inserted, Intent.DiscardLatestPath)
+
+        assertTrue(out.elements.isEmpty())
+        assertTrue(out.history.isEmpty())
+    }
+
+    @Test
+    fun testDiscardLatestOnEmptyCanvasIsNoOp() {
+        val state = State()
+        assertEquals(state, reducer.reduce(state, Intent.DiscardLatestShape(ShapeType.RECTANGLE)))
+        assertEquals(state, reducer.reduce(state, Intent.DiscardLatestPath))
+    }
+
+    @Test
     fun testUndoIntent() {
         val path = createTestPath()
         val initialState = State(

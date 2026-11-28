@@ -252,6 +252,21 @@ sealed class Intent {
      */
     data class DiscardNewShape(val id: String) : Intent()
 
+    /**
+     * Remove the element most recently inserted by the active gesture if it is
+     * a [Element.Shape] of [shapeType], and drop its undo snapshot. Used when a
+     * second pointer turns a drawing gesture into a pan/pinch; unlike
+     * [DiscardNewShape] it needs no id from the (possibly lagging) UI state.
+     */
+    data class DiscardLatestShape(val shapeType: ShapeType) : Intent()
+
+    /**
+     * Remove the element most recently inserted by the active gesture if it is
+     * a freehand [Element.Path], and drop its undo snapshot. See
+     * [DiscardLatestShape].
+     */
+    data object DiscardLatestPath : Intent()
+
     // ==================== Polygon Operations ====================
 
     /**
