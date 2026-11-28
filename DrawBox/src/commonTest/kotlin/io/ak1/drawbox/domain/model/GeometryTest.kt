@@ -252,6 +252,89 @@ class GeometryTest {
     }
 
     @Test
+    fun cornerResizeLocksShapeAspectRatio() {
+        val shape = rectShape(0f, 0f, 200f, 100f)
+
+        // Raw drag is 300 x 250 (scales 1.5 and 2.5); height dominates, so the
+        // result keeps the 2:1 ratio at 500 x 250 with the top-left anchored.
+        val newBounds = resizeBoundsForElement(shape, ResizeHandle.BottomRight, Offset(300f, 250f))
+
+        assertRectEquals(Rect(0f, 0f, 500f, 250f), newBounds)
+    }
+
+    @Test
+    fun cornerResizeFollowsTheDominantAxisWhenOneEdgeStaysPut() {
+        val shape = rectShape(0f, 0f, 200f, 100f)
+
+        // Horizontal corner drag: width scale 1.5 wins over the unchanged
+        // height, so the 2:1 box becomes 300 x 150.
+        val newBounds = resizeBoundsForElement(shape, ResizeHandle.BottomRight, Offset(300f, 100f))
+
+        assertRectEquals(Rect(0f, 0f, 300f, 150f), newBounds)
+    }
+
+    @Test
+    fun cornerResizeLocksGroupAspectRatio() {
+        val group = Element.Group(children = listOf(rectShape(0f, 0f, 200f, 100f)))
+
+        // Raw 400 x 300 (scales 2 and 3) -> 600 x 300.
+        val newBounds = resizeBoundsForElement(group, ResizeHandle.BottomRight, Offset(400f, 300f))
+
+        assertRectEquals(Rect(0f, 0f, 600f, 300f), newBounds)
+    }
+
+    @Test
+    fun cornerResizeAnchorsTheOppositeCorner() {
+        val shape = rectShape(0f, 0f, 200f, 100f)
+
+        // Top-left drag: the bottom-right corner (200, 100) stays fixed.
+        val newBounds = resizeBoundsForElement(shape, ResizeHandle.TopLeft, Offset(-50f, -25f))
+
+        assertRectEquals(Rect(-50f, -25f, 200f, 100f), newBounds)
+    }
+
+    @Test
+    fun edgeResizeStaysFree() {
+        val shape = rectShape(0f, 0f, 200f, 100f)
+
+        // Edge handles are not aspect-locked; only the dragged side changes.
+        val newBounds = resizeBoundsForElement(shape, ResizeHandle.Right, Offset(300f, 100f))
+
+        assertRectEquals(Rect(0f, 0f, 300f, 100f), newBounds)
+    }
+
+    @Test
+    fun cornerResizeLeavesTextUnlocked() {
+        val text = Element.Text(
+            text = "Hi",
+            fontSize = 20f,
+            color = Color.Black,
+            topLeft = Offset(0f, 0f),
+            wrapWidth = 100f,
+            measuredHeight = 24f,
+        )
+
+        // Text height is renderer-owned, so its corner resize keeps the free
+        // (non-proportional) behavior.
+        val newBounds = resizeBoundsForElement(text, ResizeHandle.BottomRight, Offset(200f, 48f))
+
+        assertRectEquals(Rect(0f, 0f, 200f, 48f), newBounds)
+    }
+
+    @Test
+    fun rotatedCornerResizeLocksAspectRatio() {
+        val shape = rectShape(0f, 0f, 200f, 100f).copy(rotation = 30f)
+
+        val newBounds = resizeBoundsForElement(
+            shape,
+            ResizeHandle.BottomRight,
+            Offset(300f, 300f),
+        )
+
+        assertEquals(2f, newBounds.width / newBounds.height, 0.05f)
+    }
+
+    @Test
     fun rectangleBoundsIgnoresStrayMiddlePoints() {
         // Mimics a legacy shape that recorded the cursor's whole drag path:
         // (134, 284) → (562, 1302) detour → (362, 1406) end. Renderer only uses

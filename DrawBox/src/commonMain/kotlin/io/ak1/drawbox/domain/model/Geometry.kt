@@ -732,8 +732,10 @@ private fun applyHandleDrag(rect: Rect, handle: ResizeHandle, p: Offset): Rect =
  * second-pass snapping inside [withBounds] can shift the result.
  *
  * For circles, the result is constrained to a square anchored at the un-dragged
- * corner / edge midpoint in local space. The rotation shift is then applied to
- * keep that anchor's WORLD position fixed.
+ * corner / edge midpoint in local space. Corner handles also lock the original
+ * aspect ratio for shapes (other than circles) and groups, anchored at the
+ * opposite corner; edge handles remain free. The rotation shift is then applied
+ * to keep that anchor's WORLD position fixed.
  */
 fun resizeBoundsForElement(
     element: Element,
@@ -767,37 +769,75 @@ private fun constrainBoundsForType(
     raw: Rect,
     original: Rect,
 ): Rect {
-    if (element !is Element.Shape || element.shapeType != ShapeType.CIRCLE) return raw
-    // Circle must stay a square AND keep the un-dragged anchor at its local-space
-    // position. Side is the raw dragged dimension for edge handles, max of the
-    // two for corner handles (grows to encompass the drag).
+    if (element is Element.Shape && element.shapeType == ShapeType.CIRCLE) {
+        // Circle must stay a square AND keep the un-dragged anchor at its local-space
+        // position. Side is the raw dragged dimension for edge handles, max of the
+        // two for corner handles (grows to encompass the drag).
+        val anchor = anchorLocalForHandle(handle, original)
+        val side = when (handle) {
+            ResizeHandle.Top, ResizeHandle.Bottom -> raw.height
+            ResizeHandle.Left, ResizeHandle.Right -> raw.width
+            else -> max(raw.width, raw.height)
+        }.coerceAtLeast(1f)
+        return when (handle) {
+            ResizeHandle.TopLeft -> Rect(anchor.x - side, anchor.y - side, anchor.x, anchor.y)
+            ResizeHandle.TopRight -> Rect(anchor.x, anchor.y - side, anchor.x + side, anchor.y)
+            ResizeHandle.BottomLeft -> Rect(anchor.x - side, anchor.y, anchor.x, anchor.y + side)
+            ResizeHandle.BottomRight -> Rect(anchor.x, anchor.y, anchor.x + side, anchor.y + side)
+            ResizeHandle.Top -> Rect(
+                anchor.x - side * 0.5f, anchor.y - side,
+                anchor.x + side * 0.5f, anchor.y,
+            )
+            ResizeHandle.Bottom -> Rect(
+                anchor.x - side * 0.5f, anchor.y,
+                anchor.x + side * 0.5f, anchor.y + side,
+            )
+            ResizeHandle.Left -> Rect(
+                anchor.x - side, anchor.y - side * 0.5f,
+                anchor.x, anchor.y + side * 0.5f,
+            )
+            ResizeHandle.Right -> Rect(
+                anchor.x, anchor.y - side * 0.5f,
+                anchor.x + side, anchor.y + side * 0.5f,
+            )
+        }
+    }
+
+    // Corner handles keep a shape's or group's aspect ratio so composed
+    // diagrams and pictures do not distort; edge handles stay free. Text,
+    // paths and images keep their existing free-corner behavior (text height
+    // is renderer-owned, and paths/images are not aspect-locked here).
+    val corner = handle == ResizeHandle.TopLeft || handle == ResizeHandle.TopRight ||
+        handle == ResizeHandle.BottomLeft || handle == ResizeHandle.BottomRight
+    val aspectLocked = element is Element.Shape || element is Element.Group
+    if (!corner || !aspectLocked) return raw
+    return constrainCornerAspectRatio(handle, raw, original)
+}
+
+/**
+ * Proportional corner resize: follows the axis with the larger relative change,
+ * keeps the opposite corner anchored, and never lets either side fall below one
+ * world unit.
+ */
+private fun constrainCornerAspectRatio(
+    handle: ResizeHandle,
+    raw: Rect,
+    original: Rect,
+): Rect {
+    if (original.width <= 0f || original.height <= 0f) return raw
+    val scaleX = raw.width / original.width
+    val scaleY = raw.height / original.height
+    val scale = if (abs(scaleX - 1f) >= abs(scaleY - 1f)) scaleX else scaleY
+    val minScale = max(1f / original.width, 1f / original.height)
+    val safeScale = scale.coerceAtLeast(minScale)
+    val width = original.width * safeScale
+    val height = original.height * safeScale
     val anchor = anchorLocalForHandle(handle, original)
-    val side = when (handle) {
-        ResizeHandle.Top, ResizeHandle.Bottom -> raw.height
-        ResizeHandle.Left, ResizeHandle.Right -> raw.width
-        else -> max(raw.width, raw.height)
-    }.coerceAtLeast(1f)
     return when (handle) {
-        ResizeHandle.TopLeft -> Rect(anchor.x - side, anchor.y - side, anchor.x, anchor.y)
-        ResizeHandle.TopRight -> Rect(anchor.x, anchor.y - side, anchor.x + side, anchor.y)
-        ResizeHandle.BottomLeft -> Rect(anchor.x - side, anchor.y, anchor.x, anchor.y + side)
-        ResizeHandle.BottomRight -> Rect(anchor.x, anchor.y, anchor.x + side, anchor.y + side)
-        ResizeHandle.Top -> Rect(
-            anchor.x - side * 0.5f, anchor.y - side,
-            anchor.x + side * 0.5f, anchor.y,
-        )
-        ResizeHandle.Bottom -> Rect(
-            anchor.x - side * 0.5f, anchor.y,
-            anchor.x + side * 0.5f, anchor.y + side,
-        )
-        ResizeHandle.Left -> Rect(
-            anchor.x - side, anchor.y - side * 0.5f,
-            anchor.x, anchor.y + side * 0.5f,
-        )
-        ResizeHandle.Right -> Rect(
-            anchor.x, anchor.y - side * 0.5f,
-            anchor.x + side, anchor.y + side * 0.5f,
-        )
+        ResizeHandle.TopLeft -> Rect(anchor.x - width, anchor.y - height, anchor.x, anchor.y)
+        ResizeHandle.TopRight -> Rect(anchor.x, anchor.y - height, anchor.x + width, anchor.y)
+        ResizeHandle.BottomLeft -> Rect(anchor.x - width, anchor.y, anchor.x, anchor.y + height)
+        else -> Rect(anchor.x, anchor.y, anchor.x + width, anchor.y + height)
     }
 }
 
