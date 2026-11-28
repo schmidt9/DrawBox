@@ -13,6 +13,8 @@ data class TextBlockStyle(
     val bold: Boolean = false,
     val italic: Boolean = false,
     val alignment: TextAlignment = TextAlignment.LEFT,
+    /** Optional line-height multiplier; see [Element.Text.lineHeightMultiplier]. */
+    val lineHeightMultiplier: Float? = null,
 )
 
 /** Half-open character span of one paragraph; includes its terminating `\n`. */
@@ -30,6 +32,7 @@ fun Element.Text.blockStyle(): TextBlockStyle = TextBlockStyle(
     bold = bold,
     italic = italic,
     alignment = alignment,
+    lineHeightMultiplier = lineHeightMultiplier,
 )
 
 // ==================== Paragraph geometry ====================

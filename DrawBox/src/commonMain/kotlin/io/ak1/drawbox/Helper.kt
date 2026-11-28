@@ -297,6 +297,7 @@ internal class TextLayoutCache {
         val bold: Boolean,
         val italic: Boolean,
         val runs: List<TextRun>,
+        val lineHeightMultiplier: Float?,
     )
     private data class Entry(val key: Key, val layout: TextLayoutResult)
     private val byId = HashMap<String, Entry>()
@@ -312,8 +313,19 @@ internal class TextLayoutCache {
         bold: Boolean = false,
         italic: Boolean = false,
         runs: List<TextRun> = emptyList(),
+        lineHeightMultiplier: Float? = null,
     ): TextLayoutResult {
-        val key = Key(text, fontFamilyKey, fontSize, alignment, wrapWidth, bold, italic, runs)
+        val key = Key(
+            text,
+            fontFamilyKey,
+            fontSize,
+            alignment,
+            wrapWidth,
+            bold,
+            italic,
+            runs,
+            lineHeightMultiplier,
+        )
         val existing = byId[id]
         if (existing != null && existing.key == key) return existing.layout
         val base = TextBlockStyle(
@@ -322,6 +334,7 @@ internal class TextLayoutCache {
             bold = bold,
             italic = italic,
             alignment = alignment,
+            lineHeightMultiplier = lineHeightMultiplier,
         )
         val style = base.toComposeTextStyle()
         // Pin both constraints to the wrap box. Measuring with maxWidth only

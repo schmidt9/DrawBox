@@ -343,6 +343,13 @@ sealed class Element {
         val italic: Boolean = false,
         /** Sparse inline style overrides; see [TextRun]. */
         val runs: List<TextRun> = emptyList(),
+        /**
+         * Optional line-height multiplier applied to [fontSize] (Visio's
+         * `SpLine = -1.2` becomes `1.2`). Null keeps the platform/font
+         * default; additive optional JSON field so older documents are
+         * unaffected.
+         */
+        val lineHeightMultiplier: Float? = null,
     ) : Element()
 
     data class Shape(

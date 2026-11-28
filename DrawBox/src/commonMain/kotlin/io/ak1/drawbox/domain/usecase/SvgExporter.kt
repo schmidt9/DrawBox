@@ -477,7 +477,7 @@ object SvgExporter {
         // per visual line, splitting on hard `\n` and greedy word-wrap. This
         // is intentionally lossy for re-import (the wrap rect isn't
         // recoverable from the visual layout) — JSON is the lossless format.
-        val lineHeight = text.fontSize * 1.25f
+        val lineHeight = text.fontSize * (text.lineHeightMultiplier ?: 1.25f)
         val lines = wrapTextForSvg(text.text, w, text.fontSize, text.fontFamilyKey)
         val tspans = lines.mapIndexed { i, line ->
             val dy = if (i == 0) text.fontSize else lineHeight
@@ -522,6 +522,7 @@ object SvgExporter {
         }
 
         val lines = wrapRichText(text.text, w) { charWidth(it) }
+        val lineHeightMultiplier = text.lineHeightMultiplier ?: 1.25f
         var previousFontSize = text.fontSize
         val tspans = lines.mapIndexed { index, line ->
             val lineFontSize = if (line.end > line.start) {
@@ -529,7 +530,7 @@ object SvgExporter {
             } else {
                 previousFontSize
             }
-            val dy = if (index == 0) lineFontSize else previousFontSize * 1.25f
+            val dy = if (index == 0) lineFontSize else previousFontSize * lineHeightMultiplier
             previousFontSize = lineFontSize
             val alignment = styleAt(line.start).alignment
             val anchorX = alignment.anchorX(x, w)

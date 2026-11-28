@@ -33,6 +33,7 @@ class RichTextLayoutTest {
         fontFamilyKey: String = "sans",
         alignment: TextAlignment = TextAlignment.LEFT,
         wrapWidth: Float = 300f,
+        lineHeightMultiplier: Float? = null,
     ) = TextLayoutCache().layoutFor(
         id = "text",
         text = text,
@@ -42,6 +43,7 @@ class RichTextLayoutTest {
         wrapWidth = wrapWidth,
         measurer = measurer,
         runs = runs,
+        lineHeightMultiplier = lineHeightMultiplier,
     )
 
     @Test
@@ -59,6 +61,30 @@ class RichTextLayoutTest {
         assertTrue(
             result.layoutInput.text.spanStyles.any { it.item.fontStyle == FontStyle.Italic },
             "italic span missing: ${result.layoutInput.text.spanStyles}",
+        )
+    }
+
+    @Test
+    fun lineHeightMultiplierChangesTheMeasuredHeight() {
+        val compact = layout(
+            "a\nb",
+            fontSize = 20f,
+            lineHeightMultiplier = 1.2f,
+        )
+        val spacious = layout(
+            "a\nb",
+            fontSize = 20f,
+            lineHeightMultiplier = 2f,
+        )
+
+        assertTrue(
+            spacious.size.height > compact.size.height,
+            "line height 2.0 (${spacious.size.height}) should exceed 1.2 " +
+                "(${compact.size.height})",
+        )
+        assertTrue(
+            compact.size.height in 44..52,
+            "two 20 px lines at 1.2 should be ~48 px, was ${compact.size.height}",
         )
     }
 

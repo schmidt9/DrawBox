@@ -231,6 +231,11 @@ data class ElementDto(
     /** Inline style overrides over substrings; absent for uniform text. */
     val runs: List<TextRunDto>? = null,
     /**
+     * Optional line-height multiplier applied to the font size (Visio
+     * `SpLine = -1.2` becomes `1.2`). Absent/null keeps the platform default.
+     */
+    val lineHeightMultiplier: Float? = null,
+    /**
      * Nested children of a `"Group"` element, in the group's local coordinate
      * frame. Null/absent on leaf elements and in legacy files.
      */
@@ -314,6 +319,7 @@ fun Element.toDto(): ElementDto = when (this) {
                 alignment = it.alignment?.name,
             )
         }.takeIf { it.isNotEmpty() },
+        lineHeightMultiplier = lineHeightMultiplier,
         name = name.takeIf { it.isNotBlank() },
         layerId = layerId,
     )
@@ -414,6 +420,7 @@ fun ElementDto.toElement(): Element = when (type) {
                 "RIGHT" -> io.ak1.drawbox.domain.model.TextAlignment.RIGHT
                 else -> io.ak1.drawbox.domain.model.TextAlignment.LEFT
             },
+            lineHeightMultiplier = lineHeightMultiplier,
         )
         Element.Text(
             id = id,
@@ -427,7 +434,9 @@ fun ElementDto.toElement(): Element = when (type) {
             // Single-line guess — the renderer's first layout pass dispatches
             // SyncTextMeasuredHeight to bring this to the actual rendered
             // height on the next frame.
-            measuredHeight = (resolvedFontSize * 1.2f).coerceAtLeast(resolvedFontSize),
+            measuredHeight = (
+                resolvedFontSize * (lineHeightMultiplier ?: 1.2f)
+                ).coerceAtLeast(resolvedFontSize),
             opacity = opacity ?: 1f,
             zIndex = zIndex,
             rotation = rotation ?: 0f,
@@ -442,6 +451,7 @@ fun ElementDto.toElement(): Element = when (type) {
                 runs = runs.orEmpty().mapNotNull { it.toTextRunOrNull() },
                 base = baseStyle,
             ),
+            lineHeightMultiplier = lineHeightMultiplier,
         )
     }
     "Shape" -> Element.Shape(
@@ -551,6 +561,8 @@ data class SerializableElement(
     val italic: Boolean? = null,
     /** Inline style overrides over substrings; absent for uniform text. */
     val runs: List<TextRunDto>? = null,
+    /** Optional line-height multiplier; absent/null = platform default. */
+    val lineHeightMultiplier: Float? = null,
     val children: List<SerializableElement>? = null,
     /** Auto-assigned display name; absent in legacy files. */
     val name: String? = null,
@@ -622,6 +634,7 @@ private fun ElementDto.toSerializableElement(): SerializableElement = Serializab
     bold = bold,
     italic = italic,
     runs = runs,
+    lineHeightMultiplier = lineHeightMultiplier,
     children = children?.map { it.toSerializableElement() },
     name = name,
     layerId = layerId,
@@ -661,6 +674,7 @@ private fun SerializableElement.toElementDto(): ElementDto = ElementDto(
     bold = bold,
     italic = italic,
     runs = runs,
+    lineHeightMultiplier = lineHeightMultiplier,
     children = children?.map { it.toElementDto() },
     name = name,
     layerId = layerId,

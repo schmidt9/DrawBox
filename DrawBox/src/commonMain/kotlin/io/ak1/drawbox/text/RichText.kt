@@ -40,6 +40,9 @@ fun TextBlockStyle.toComposeTextStyle(
     textAlign = alignment.toComposeTextAlign(),
     fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
     fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
+    lineHeight = lineHeightMultiplier?.let {
+        fontSizeToTextUnit(fontSize * it)
+    } ?: TextUnit.Unspecified,
     color = color,
 )
 
